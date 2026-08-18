@@ -91,6 +91,47 @@ l'écran) pour confirmer le sens d'avance (vers le bas = OK direct avec
 `fn_vram_advance_line` tel qu'écrit ; vers le haut = il faudra une variante
 "avance vers le haut", pas encore écrite).
 
+## Tentative de branchement (2026-08-18, après-midi) — ÉCHEC, révélateur
+
+Branché `fn_vram_fill_rect` dans `fn_stage_blit_and_clear` via
+`fn_stage_clear_vram_and_buffer_addr` (clear direct VRAM AJOUTÉ en plus du
+chemin buffer existant, censé être inoffensif/redondant — voir raisonnement
+initial ci-dessus). **Plante en jeu réel** : trace live après chargement
+d'une salle montre le CPU tournant en boucle entre `#0039` (handler IM1) et
+`#90A0`-ish, et une lecture RAM de `#9000+` montre du contenu qui n'a plus
+aucun rapport avec le code assemblé (`00 ff ee 11 00...`) — nos routines à
+`#9000` ont été **écrasées**.
+
+**Cause identifiée, pas une hypothèse** : `fn_clear_intermediate_buffer`
+(`code/rendering_pipeline.asm`, appelée par `fn_init_room` à CHAQUE
+chargement de salle) fait `ld bc,#3000 / ld hl,#9000 / jr fn_mem_fill_simple`
+— un remplissage inconditionnel de **tout** `#9000-#BFFF` à zéro, qui
+écrase donc n'importe quel code qu'on y aurait posé, indépendamment de
+savoir si `fn_blit_masked` écrit aussi par-dessus dynamiquement (lui aussi
+vrai, mais même sans lui ce clear seul suffit à tout détruire).
+
+**Conclusion qui invalide le plan de migration incrémentale envisagé plus
+haut** : il n'existe **aucune sous-partie sûre** de `#9000-#BFFF` où loger
+du code neuf tant que `fn_clear_intermediate_buffer` ET `fn_blit_masked`
+(adressage dynamique, peut cibler n'importe quel octet de la zone selon la
+position à l'écran) n'ont pas TOUS LES DEUX cessé d'utiliser cette zone
+comme buffer. Pas de "on migre le clear, on teste, puis on migre le dessin" :
+le clear seul du prochain chargement de salle détruit tout ce qu'on a posé
+avant même d'avoir pu tester quoi que ce soit. **Piège générique à noter
+dans `docs/METHODOLOGY.md`** : avant de réutiliser une zone RAM libérée
+pour du code neuf, vérifier qu'AUCUN écrivain (même partiel/occasionnel,
+même juste un memset au chargement) ne cible encore cette zone comme
+donnée — un seul écrivain restant suffit à rendre TOUTE la zone inutilisable
+pour du code, pas seulement la portion qu'il touche effectivement.
+
+**Reverté** (branchement dans `fn_stage_blit_and_clear` annulé, code de
+`fn_vram_fill_rect`/`fn_vram_advance_line`/`fn_stage_clear_vram_and_buffer_addr`
+conservé mais non appelé) pour ne pas laisser la branche dans un état qui
+plante. Prochaine étape réaliste : migrer `fn_clear_intermediate_buffer`
+ET `fn_blit_masked`/`fn_sprite_pipeline_setup` (tous les appelants, voir
+"découverte clé" plus haut) dans le MÊME changement atomique avant de
+pouvoir poser quoi que ce soit à `#9000+` -- pas de raccourci possible.
+
 ## Prochaines étapes
 
 1. Trace live pour lever l'ambiguïté ci-dessus (nécessite émulateur).

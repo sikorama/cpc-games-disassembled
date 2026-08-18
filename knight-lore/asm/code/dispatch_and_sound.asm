@@ -319,26 +319,43 @@ loc_0846:
         dec    h
         inc    l
         jr    nz,loc_082C
-        ld    hl,#8300
-        ld    de,STACK_TOP_INIT
-        ld    c,#11
-loc_085C:
-        ld    b,(hl)
-loc_085D:
-        ld    a,b
-        and    c
-        jr    z,loc_0864
-        ld    a,b
-        or    c
-        ld    b,a
-loc_0864:
-        rlc    c
-        jr    nc,loc_085D
-        ld    a,b
-        ld    (de),a
-        inc    e
-        inc    l
-        jr    nz,loc_085C
+        ; [branche vram-direct-experiment] Les 26 octets originaux ici
+        ; construisaient la table #8100-#81FF ("nibble dupliqué",
+        ; 00,11,22,...,FF) -- CONFIRMÉE sans aucun lecteur dans tout le
+        ; jeu (voir docs/SYMBOLS.md #0829/#2F8D, dump/diff live répété
+        ; montrant cette zone statique). Neutralisés en nop (longueur
+        ; identique, aucun décalage d'adresse pour tout ce qui suit) pour
+        ; libérer #8100-#81FF EN PERMANENCE au profit de
+        ; code/vram_direct_rendering.asm -- contrairement à
+        ; #9000-#BFFF (buffer intermédiaire), rien d'autre n'écrit ici,
+        ; ni au chargement de salle ni pendant le rendu. Voir
+        ; notes/2026-08-18-vram-direct-patch-plan.md.
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
         ld    hl,#8200
 loc_0871:
         ld    d,(hl)

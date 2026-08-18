@@ -222,13 +222,19 @@ fn_stage_blit_and_clear:
         dec    a
         ld    b,a
         call    fn_screen_addr_from_bc
-        ld    a,c
-        ld    c,l
-        ld    l,a
-        ld    a,b
-        ld    b,h
-        ld    h,a
-        call    fn_buffer_addr_from_vram
+        ; [branche vram-direct-experiment] remplace les 9 octets originaux
+        ; (swap BC<->HL + call fn_buffer_addr_from_vram) par un appel vers
+        ; code/vram_direct_rendering.asm qui fait exactement la même chose
+        ; PLUS le nouveau clear direct VRAM -- padding nop pour garder la
+        ; taille de fn_stage_blit_and_clear identique (voir
+        ; notes/2026-08-18-vram-direct-patch-plan.md).
+        call    fn_stage_clear_vram_and_buffer_addr
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
         ld    a,(var_blit_stack_counter)
         inc    a
         ld    (var_blit_stack_counter),a
