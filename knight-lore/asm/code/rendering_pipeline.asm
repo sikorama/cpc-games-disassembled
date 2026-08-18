@@ -272,20 +272,25 @@ loc_2EBD:
 fn_blit_copy_line:
         ; Copie une ligne source→écran (LDIR), gère l'entrelacement CRTC. Source
         ; (buffer intermédiaire 0x9000+) recule de 64 octets/ligne (flip
-        ; vertical), destination (VRAM) avance normalement +0x0800/+0xC050
+        ; vertical), destination (VRAM) avance normalement +0x0800/+0xC050.
+        ; [branche vram-direct-experiment] Avance destination factorisée dans
+        ; fn_vram_advance_line (code/vram_direct_rendering.asm) -- comportement
+        ; inchangé, voir OPTIMISATION.md §4.
         push    bc
         push    hl
         push    de
         ld    b,#00
         ldir
         pop    de
-        ld    hl,#0800
-        add    hl,de
-        jr    nc,loc_2ED2
-        ld    de,#C050
-        add    hl,de
-loc_2ED2:
         ex    de,hl
+        call    fn_vram_advance_line
+        ex    de,hl
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
         pop    hl
         ld    bc,#FFC0
         add    hl,bc

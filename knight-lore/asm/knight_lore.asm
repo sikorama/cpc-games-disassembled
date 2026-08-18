@@ -45,12 +45,21 @@
 ; tables a extent confirmee sont transcrites, voir asm/README.md ---
         include "data/resources_zone.asm"                 ; #4046-#7FFF
 
-; --- #9000+ : AUCUN org/donnees ci-dessous. Le buffer de pre-rendu
-; (BUF_PRERENDER_BASE, #9000, CONFIRMED) et la VRAM (VRAM_BASE, #C000)
-; sont de la RAM d'execution pure (reconstruite/dessinee chaque frame),
-; pas du contenu charge depuis le support d'origine -- ils n'existent
-; dans ce source QUE comme symboles EQU (include/memory_map.equ.asm),
-; demande explicite de l'utilisateur.
+; --- BRANCHE vram-direct-experiment UNIQUEMENT : code NEUF (pas issu du
+; desassemblage) a #9000, dans la zone que fn_stage_blit_and_clear/
+; fn_blit_masked utilisent encore aujourd'hui comme buffer intermediaire
+; -- tant que ces routines n'ont pas ete migrees vers l'ecriture VRAM
+; directe, cette zone n'est PAS reellement libre. Voir statut en tete de
+; code/vram_direct_rendering.asm et notes/2026-08-18-vram-direct-patch-plan.md.
+        include "code/vram_direct_rendering.asm"          ; #9000+ (NEUF)
+
+; --- #9000+ (source original / branche main) : AUCUN org/donnees
+; ci-dessous. Le buffer de pre-rendu (BUF_PRERENDER_BASE, #9000,
+; CONFIRMED) et la VRAM (VRAM_BASE, #C000) sont de la RAM d'execution
+; pure (reconstruite/dessinee chaque frame), pas du contenu charge
+; depuis le support d'origine -- ils n'existent dans ce source QUE
+; comme symboles EQU (include/memory_map.equ.asm), demande explicite de
+; l'utilisateur.
 ;
 ; #8000-#8FFF : statut CONFIRMED (2026-08-09, verification live +
 ; desassemblage direct) -- NE PAS assimiler a #9000+, role different.
