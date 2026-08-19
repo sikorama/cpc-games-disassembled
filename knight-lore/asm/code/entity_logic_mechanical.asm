@@ -612,7 +612,7 @@ fn_game_over_or_daycycle_end:
         and    a
         jp    nz,fn_game_over_screen_sequence
 loc_1302:
-        call    fn_clear_intermediate_buffer
+        call    fn_vram_clear_playfield_and_buffer
         call    fn_clear_screen
         ld    de,#1431
         exx
@@ -621,8 +621,8 @@ loc_1302:
         ld    b,#06
         call    #176B
         ld    a,#FF
-        ld    (#172C),a
-        ld    (#173C),a
+        ld    (glyph_attr_mask_left),a
+        ld    (glyph_attr_mask_right),a
         ld    de,var_pickup_sequence_counter
         ld    a,(de)
         sub    #0A
@@ -630,10 +630,10 @@ loc_1302:
         or    #10
         ld    (de),a
 loc_132A:
-        ld    hl,#A3EE
+        ld    hl,#C496        ; [vram-direct] ex-#A3EE (buffer) : ecran de game over -- compteur de collecte (y=79, x=184)
         ld    b,#01
         call    fn_hud_render_bcd_digits
-        ld    hl,#AFDE
+        ld    hl,#C2A6        ; [vram-direct] ex-#AFDE (buffer) : ecran de game over -- compteur de jours (y=127, x=120)
         ld    de,var_day_counter
         ld    b,#01
         call    fn_hud_render_bcd_digits
@@ -659,7 +659,7 @@ loc_132A:
         ld    hl,#2758
         call    fn_menu_draw_string_de_attribute
         call    fn_game_over_border_draw
-        call    fn_copy_screen_rect
+        call    fn_vram_merge_buffer_to_screen
 loc_1368:
         xor    a
         ld    hl,tbl_wait_any_key_all_rows
@@ -704,7 +704,7 @@ fn_game_over_screen_sequence:
         ; fn_copy_screen_rect, boucle d'attente input (fn_read_joystick_table),
         ; joue le jingle de fin (#0C49, fn_sound_program_play_blocking), rappelle
         ; fn_wait_input_release_with_timeout (#137D) puis JP fn_restart_from_menu.
-        call    fn_clear_intermediate_buffer
+        call    fn_vram_clear_playfield_and_buffer
         call    fn_clear_screen
         call    fn_game_over_border_draw
         ld    de,tbl_game_over_screen_strings_a
@@ -848,9 +848,9 @@ fn_hud_render_day_counter:
         ; fn_game_over_screen_sequence), DE=var_day_counter (#007F), B=1, HL=#91DE
         ; (position ecran), puis JP fn_hud_render_bcd_digits.
         ld    a,#FF
-        ld    (#172C),a
-        ld    (#173C),a
-        ld    hl,#91DE
+        ld    (glyph_attr_mask_left),a
+        ld    (glyph_attr_mask_right),a
+        ld    hl,#C756        ; [vram-direct] ex-#91DE (buffer) : fn_hud_render_day_counter -- compteur de jours (y=7, x=120)
         ld    de,var_day_counter
         ld    b,#01
         jp    fn_hud_render_bcd_digits
@@ -860,11 +860,11 @@ fn_hud_render_secondary_counter:
         ; -- hypothese: compteur de vies) et HL=#99C8 (autre position ecran).
         ; Semantique de (#0080) non confirmee ici.
         ld    a,#FF
-        ld    (#172C),a
-        ld    (#173C),a
+        ld    (glyph_attr_mask_left),a
+        ld    (glyph_attr_mask_right),a
         ld    de,var_life_counter
         ld    b,#01
-        ld    hl,#99C8
+        ld    hl,#C600        ; [vram-direct] ex-#99C8 (buffer) : fn_hud_render_secondary_counter -- compteur de vies (y=39, x=32)
         jp    fn_hud_render_bcd_digits
 fn_hud_render_bcd_digits:
         ; Helper partage: force (#008C)=tbl_menu_font (#3294), puis pour B
@@ -945,7 +945,7 @@ loc_15CB:
         ld    (hl),#0F
         inc    hl
         djnz    loc_15CB
-        call    fn_clear_intermediate_buffer
+        call    fn_vram_clear_playfield_and_buffer
         call    fn_game_over_border_draw
         call    fn_control_mode_menu_palette_indicator_update
         ld    hl,tbl_ga_config_stream_boot
@@ -1067,7 +1067,7 @@ fn_menu_draw_string_reset_font:
         ld    hl,tbl_menu_font
         ld    (var_glyph_table_base),hl
         pop    hl
-        call    fn_buffer_addr_from_vram
+        call    fn_vram_addr_from_yx
 fn_menu_draw_string:
         ; Menu seulement: affiche une chaîne (terminateur bit7) via
         ; fn_menu_glyph_unpack
@@ -1089,12 +1089,12 @@ fn_menu_draw_string_de_attribute:
         ld    (var_glyph_table_base),hl
 loc_16F1:
         pop    hl
-        call    fn_buffer_addr_from_vram
+        call    fn_vram_addr_from_yx
         ld    a,(de)
         inc    de
 loc_16F7:
-        ld    (#172C),a
-        ld    (#173C),a
+        ld    (glyph_attr_mask_left),a
+        ld    (glyph_attr_mask_right),a
 loc_16FD:
         ld    a,(de)
         inc    de

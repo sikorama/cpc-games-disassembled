@@ -57,58 +57,50 @@ loc_2D93:
         or    c
         jr    nz,loc_2D93
         ret
-fn_clear_screen:
-        ; Efface l'écran complet 0xC000, gère l'entrelacement CRTC
-        ld    hl,VRAM_BASE
-        ld    c,#19
-loc_2DA0:
-        ld    b,#50
-        push    hl
-loc_2DA3:
-        ld    (hl),#00
-        inc    hl
-        djnz    loc_2DA3
-        pop    hl
-        ld    de,#0800
-        add    hl,de
-        jr    nc,loc_2DA0
-        ld    de,#C050
-        add    hl,de
-        dec    c
-        jr    nz,loc_2DA0
-        ret
-fn_clear_intermediate_buffer:
-        ; LD BC,#3000 / LD HL,#9000 / JR fn_mem_fill_simple (l'entrée #2D91 force
-        ; E=0) — efface entièrement le buffer de rendu intermédiaire 0x9000-0xBFFF
-        ; (voir fn_buffer_addr_from_vram #3186). Seul appelant trouvé:
-        ; fn_init_room (#2A71), juste avant fn_load_room_data — cohérent avec un
-        ; nettoyage complet du buffer de travail à chaque (re)chargement de salle
-        ld    bc,#3000
-        ld    hl,BUF_PRERENDER_BASE
-        jr    fn_mem_fill_simple
-fn_copy_screen_rect:
-        ; Copie rectangulaire écran→écran via LDIR
-        ld    hl,#BFC0
-        ld    de,#C008
-        ld    b,#C0
-loc_2DC7:
-        push    bc
-        push    hl
-        ld    bc,#0040
-        ldir
-        ld    hl,#07C0
-        add    hl,de
-        jr    nc,loc_2DD8
-        ld    de,#C050
-        add    hl,de
-loc_2DD8:
-        ex    de,hl
-        pop    hl
-        ld    bc,#FFC0
-        add    hl,bc
-        pop    bc
-        djnz    loc_2DC7
-        ret
+; ============================================================
+; ZONE DE PILE (branche vram-direct-experiment, 2026-08-19)
+;
+; 71 octets, #2D9B-#2DE1, immediatement SOUS fn_render_entities (#2DE2)
+; qui suit : la pile part de #2DE2 et descend, elle n'ecrit donc jamais
+; dans du code vivant tant qu'elle ne depasse pas 71 octets.
+;
+; POURQUOI ICI : l'objectif est de liberer #8000-#BFFF (double buffer),
+; or SP etait initialise a #8100 avec une pile active descendant jusqu'a
+; #80D6 (usage observe) voire #8010 (borne calculee). Il fallait 64
+; octets contigus sous #8000 -- il n'y en avait aucun de libre, ils ont
+; ete FABRIQUES ici en supprimant trois routines devenues mortes ou
+; deplacees :
+;   - fn_clear_screen (28o) : encore vivante, relogee telle quelle dans
+;     code/vram_direct_rendering.asm (appelants symboliques, rien a
+;     changer chez eux) ;
+;   - fn_clear_intermediate_buffer (8o) et fn_copy_screen_rect (35o) :
+;     n'etaient plus que des `jp` de redirection vers
+;     fn_vram_clear_playfield_and_buffer / fn_vram_merge_buffer_to_screen
+;     depuis le correctif du 2026-08-19 -- leurs appelants pointent
+;     desormais directement sur les cibles, les tremplins disparaissent.
+;
+; POURQUOI 71 OCTETS SUFFISENT : le gros consommateur de pile etait la
+; FILE DE BLITS DIFFERES (fn_stage_blit_and_clear empilait BC/DE/HL par
+; entite sale, soit jusqu'a 40x6 = 240 octets -- c'est exactement d'ou
+; venait la borne #8010). Cette file est supprimee ci-dessous (le blit
+; differe fn_blit_copy_line est mort : le dessin va directement en VRAM).
+; Ne reste que l'imbrication d'appels + les push des routines, tres
+; en-dessous de 71 octets.
+;
+; SI CA DEBORDE : le bloc libre de 46 octets laisse a #2EAE (voir
+; ex-loc_2EAA plus bas) est le candidat naturel pour agrandir la zone,
+; mais il n'est PAS contigu -- il faudrait d'abord y reloger
+; fn_isometric_project ou equivalent. Verification empirique
+; recommandee : remplir la zone d'un motif temoin au boot et relire la
+; borne basse atteinte apres quelques minutes de jeu.
+;
+; La taille est EXACTEMENT 71 (#0047) pour que fn_render_entities reste
+; a #2DE2 -- contrainte generale de ce fichier, voir l'operande
+; auto-modifie #2F8B plus bas.
+; ============================================================
+zone_stack:
+        ds #0047
+zone_stack_top:
 fn_render_entities:
         ; Orchestre TOUT le rendu d'une frame en 3 étapes imbriquées (pas 2 passes
         ; séparées comme documenté précédemment): (1) #2DF5-#2E97 — pour chaque
@@ -229,20 +221,38 @@ fn_stage_blit_and_clear:
         ; taille de fn_stage_blit_and_clear identique (voir
         ; notes/2026-08-18-vram-direct-patch-plan.md).
         call    fn_stage_clear_vram_and_buffer_addr
-        nop
-        nop
-        nop
+        ; [vram-direct 2026-08-19] enregistre le rectangle sale dans
+        ; tbl_dirty_rects, la fenetre de publication que la copie differee
+        ; assurait avant (elle portait cette liste sur la pile, via les
+        ; push neutralises plus bas). Consomme 3 des 6 nop de bourrage.
+        call    fn_dirty_rect_store
         nop
         nop
         nop
         ld    a,(var_blit_stack_counter)
         inc    a
         ld    (var_blit_stack_counter),a
-        push    bc
-        push    de
-        push    hl
-        xor    a
-        call    fn_fill_rect
+        ; [vram-direct 2026-08-19] 7 octets neutralises. Ils empilaient
+        ; BC/DE/HL (parametres du blit differe buffer->VRAM, depile par
+        ; l'ex-boucle loc_2EAA) puis effacaient le rectangle sale DANS LE
+        ; BUFFER. Les deux sont sans objet : le rectangle est deja efface
+        ; directement en VRAM par fn_stage_clear_vram_and_buffer_addr
+        ; juste au-dessus, et fn_blit_copy_line est morte.
+        ;
+        ; C'est aussi ce qui rend la nouvelle zone de pile de 71 octets
+        ; suffisante : ces 6 octets par entite sale etaient le seul
+        ; consommateur de pile non borne du jeu (jusqu'a 40x6 = 240).
+        ; var_blit_stack_counter continue d'etre incremente juste
+        ; au-dessus : c'est la mesure de charge lue par
+        ; fn_render_workload_pacing_delay, le calage de frame est donc
+        ; inchange.
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
         jp    loc_2DF5
 loc_2E8D:
         ld    c,(ix+off_screen_x)
@@ -251,58 +261,65 @@ loc_2E92:
         ld    b,(ix+off_screen_y)
         jr    loc_2E4B
 loc_2E97:
-        call    fn_check_collisions
+        ; [vram-direct 2026-08-19] etait `call fn_check_collisions`.
+        ; L'enveloppe active l'ecretage aux rectangles sales le temps de la
+        ; passe de dessin des entites, et le desactive ensuite : les
+        ; appels HUD juste en dessous, la materialisation et les ecrans de
+        ; menu / game over continuent de dessiner en entier. Meme longueur.
+        call    fn_collide_clipped
         call    fn_hud_day_night_cycle
         call    fn_hud_slot_notification
         ld    hl,var_blit_stack_counter
         ld    a,(var_blit_stack_accumulator)
         add    a,(hl)
         ld    (var_blit_stack_accumulator),a
-loc_2EAA:
-        ld    hl,var_blit_stack_counter
-        ld    a,(hl)
-        and    a
-        jr    z,loc_2EBD
-        dec    (hl)
-        pop    hl
-        pop    de
-        pop    bc
-        ld    a,b
-        ld    b,c
-        ld    c,a
-        call    fn_blit_copy_line
-        jr    loc_2EAA
-loc_2EBD:
+; ============================================================
+; [vram-direct 2026-08-19] Les 50 octets #2EAA-#2EDB contenaient la
+; boucle de blits differes (19o), sa sortie loc_2EBD (3o) et
+; fn_blit_copy_line (28o). Tout est mort : le dessin va directement en
+; VRAM, il n'y a plus rien a recopier depuis le buffer.
+; Nouveau contenu, meme longueur totale (50) pour ne pas decaler
+; l'operande auto-modifie #2F8B :
+;   3o  fin de frame (ex-loc_2EBD, remontee ici)
+;   1o  fn_blit_copy_line -> un simple `ret`, pour que ses appelants
+;       encore presents (fn_hud_icon_redraw_8x4, loc_1C6E,
+;       fn_hud_slot_notification) restent assemblables sans les toucher
+;   46o bloc LIBRE
+; ============================================================
         pop    ix
         ret
 fn_blit_copy_line:
-        ; Copie une ligne source→écran (LDIR), gère l'entrelacement CRTC. Source
-        ; (buffer intermédiaire 0x9000+) recule de 64 octets/ligne (flip
-        ; vertical), destination (VRAM) avance normalement +0x0800/+0xC050.
-        ; [branche vram-direct-experiment] Avance destination factorisée dans
-        ; fn_vram_advance_line (code/vram_direct_rendering.asm) -- comportement
-        ; inchangé, voir OPTIMISATION.md §4.
-        push    bc
-        push    hl
-        push    de
-        ld    b,#00
-        ldir
-        pop    de
-        ex    de,hl
-        call    fn_vram_advance_line
-        ex    de,hl
-        nop
-        nop
-        nop
-        nop
-        nop
-        nop
-        pop    hl
-        ld    bc,#FFC0
-        add    hl,bc
-        pop    bc
-        djnz    fn_blit_copy_line
+        ; [vram-direct] Vidée : `ret` seul. Le corps d'origine (copie
+        ; ligne buffer->VRAM avec entrelacement CRTC) n'a plus d'objet.
         ret
+fn_mark_count:
+        ; [vram-direct 2026-08-19] Loge dans les 46 octets libres #2EAE-#2EDB
+        ; (ex-boucle de blits differes). Compte les entites actives portant
+        ; le bit4 « a redessiner ». Sert de detecteur de point fixe a
+        ; fn_mark_closure_then_cull (code/vram_direct_rendering.asm) : le
+        ; marquage ne fait qu'AJOUTER des bits, donc le compte est monotone
+        ; et son invariance signale la convergence.
+        ;
+        ; OUT : C = nombre d'entites marquees. Detruit A/B/DE/IY.
+        ld    iy,struct_entities_base
+        ld    b,#28
+        ld    c,#00
+fn_mark_count_loop:
+        ld    a,(iy+off_type)
+        and    a
+        jr    z,fn_mark_count_next
+        bit    4,(iy+off_flags)
+        jr    z,fn_mark_count_next
+        inc    c
+fn_mark_count_next:
+        ld    de,#001C
+        add    iy,de
+        djnz    fn_mark_count_loop
+        ret
+
+zone_free_2EAE:
+        ; Reste des 46 octets libres sous #8000.
+        ds #002E - (zone_free_2EAE - fn_mark_count)
 fn_isometric_project:
         ; Projection isometrique (grid_x,grid_y) -> (screen_x,screen_y), verifiee
         ; par calcul numerique exact contre des valeurs reelles observees.
@@ -376,12 +393,28 @@ loc_2F23:
         res    4,(ix+off_flags)
         call    fn_isometric_project
         ret    nc
-        call    fn_resolve_sprite_shape
-        ld    a,(de)
-        and    #3F
-        cpl
-        add    a,#41
-        ld    (#30AF),a
+        ; [vram-direct 2026-08-19] #2F2B -- egalement le POINT D'ENTREE
+        ; ALTERNATIF du pipeline sprite (HUD, bordures : ils posent
+        ; screen_x/y a la main et sautent projection et culling). Les 3
+        ; octets `call fn_resolve_sprite_shape` deviennent un `jp` vers le
+        ; driver ecretant, qui commence par ce meme appel. Tout le corps
+        ; qui suit jusqu'a #2F8A devient MORT (laisse en place : la
+        ; longueur du fichier est contrainte, voir plus bas).
+        jp    fn_blit_clip_driver
+        ; [vram-direct] 9 octets neutralises. Ils calculaient le stride
+        ; (64-w, puis -w) et le pokaient dans l'operande #30AF. Les
+        ; familles deroulees ayant ete remplacees par de vraies boucles,
+        ; la largeur est desormais portee par var_blit_width, pose par le
+        ; stub d'entree -- plus aucun code auto-modifiant ici.
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
         ld    a,(ix+off_screen_x)
         and    #03
         jp    z,loc_30BB
@@ -398,13 +431,16 @@ loc_2F23:
         and    #0F
         ld    l,a
         ld    h,#00
+        ; [vram-direct] x18 -> x4 : les entrees deroulees de 18 octets
+        ; sont devenues des stubs de 4 octets. 5 nop pour preserver la
+        ; longueur (contrainte #2F8B).
         add    hl,hl
-        ld    c,l
-        ld    b,h
         add    hl,hl
-        add    hl,hl
-        add    hl,hl
-        add    hl,bc
+        nop
+        nop
+        nop
+        nop
+        nop
         ld    bc,fn_blit_masked
 loc_2F5E:
         add    hl,bc
@@ -419,11 +455,19 @@ loc_2F5E:
         add    a,(ix+off_screen_h)
         ld    (ix+off_screen_h),a
 loc_2F76:
-        ld    l,(ix+off_screen_x)
-        ld    h,(ix+off_screen_y)
-        call    fn_buffer_addr_from_vram
-        ld    b,h
-        ld    c,l
+        ; [vram-direct] les 11 octets d'origine calculaient l'adresse dans
+        ; le buffer intermediaire ; ils sont remplaces par un appel qui
+        ; calcule l'adresse VRAM reelle (code/vram_direct_rendering.asm),
+        ; padding nop pour conserver les 11 octets.
+        call    fn_vram_sprite_addr
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
         ex    af,af'
         inc    de
         add    a,#80
@@ -431,35 +475,101 @@ loc_2F76:
         ld    a,(ix+off_screen_h)
 loc_2F89:
         ex    af,af'
-        jp    loc_3147
+        ; Cible factice : cet operande (#2F8B) est ecrase a chaque appel par
+        ; fn_sprite_pipeline_setup avec le stub de largeur voulu. Pointait
+        ; sur loc_3147 (une entree du deroulement aligne, disparue avec la
+        ; mise en boucle) ; pointe desormais sur la base de la famille
+        ; decalee, tout aussi arbitraire mais valide.
+        jp    fn_blit_masked
 fn_blit_masked:
-        ; Blit "mask-then-or" (écran = fond&masque \| couleur), en fait DEUX
-        ; familles de variantes juxtaposées en mémoire, chacune une série
-        ; d'entrées espacées régulièrement (indexées par largeur, voir 0x2F17):
-        ; (a) 0x2F8D-0x30BA, unité de 18 octets/entrée, variante "décalage sub-
-        ; octet" (lit 1 octet, AND/OR sur 2 octets écran adjacents décalés); (b)
-        ; 0x30BB-0x31E8 (via l'entrée alternative 0x30E3+), unité de 10
-        ; octets/entrée, variante "aligné-octet" (lit 1 octet, AND/OR sur 1 seul
-        ; octet écran, plus simple car pas de répartition inter-octets). Chaque
-        ; famille boucle sur ses colonnes (compteur dans AF'), avance le pointeur
-        ; écran de +0x36 (54) par colonne, jusqu'à épuisement, puis ret. RÉSOUT le
-        ; rôle des tables #8200-#8FFF (voir #0829): juste avant d'entrer dans la
-        ; variante patchée (#2F81-#2F8A, code commun aux deux familles), H est
-        ; calculé comme #80 + shift où shift = 2 (variante alignée, posé à #30BD)
-        ; ou (screen_x&3)*4 = 4/8/12 (variante décalée, posé à #2F43) — donc H ∈
-        ; {#82, #84, #88, #8C}. Le corps de boucle lit ensuite A=(bc) (octet écran
-        ; courant), AND (HL) [table page H, index = octet de forme lu dans (de)] =
-        ; masque, INC H; OR (HL) [page H+1] = couleur, écrit (bc)=A. Pour la
-        ; variante décalée, une 2e paire est utilisée pour l'octet écran adjacent:
-        ; INC H (page H+2, 2e masque), INC H (page H+3, 2e couleur), puis DEC H ×3
-        ; pour revenir à H avant l'octet de forme suivant. Donc #82xx/#83xx =
-        ; paire masque/couleur "alignée" (pas de décalage), et
-        ; #84-#87/#88-#8B/#8C-#8F = triplets de paires
-        ; masque1/couleur1/masque2/couleur2 pour les décalages sub-octet 1/2/3
-        ; pixels — exactement les tables construites par
-        ; fn_build_pixel_bitscatter_tables (#0829). Seule #8100 (nibble dupliqué)
-        ; n'est PAS référencée par cette routine — rôle encore non tracé, piste
-        ; ouverte
+        ; ============================================================
+        ; [vram-direct-experiment, 2026-08-19] REECRITURE EN BOUCLES.
+        ;
+        ; A l'origine : deux familles "duff device" de 16 entrees
+        ; deroulees chacune (18 o/entree pour la variante a decalage
+        ; sub-octet, 10 o/entree pour la variante alignee-octet), soit
+        ; ~450 octets, le point d'entree encodant la largeur.
+        ;
+        ; Desormais : chaque entree est un STUB de 4 octets qui charge la
+        ; largeur dans A et saute au corps de boucle unique de sa famille.
+        ; Le mecanisme de dispatch d'origine est INCHANGE (JP auto-modifie
+        ; en #2F8A, adresse = base + index x taille_unite) -- seule la
+        ; taille d'unite passe de 18/10 a 4, ajustee dans les deux
+        ; multiplicateurs de fn_sprite_pipeline_setup.
+        ;
+        ; POURQUOI : liberer de la place DANS la zone de code pour y loger
+        ; les routines VRAM-directes. #8100 s'est revele inutilisable --
+        ; c'est STACK_TOP_INIT (voir include/memory_map.equ.asm:65) et la
+        ; zone est ecrasee en cours de jeu (constat direct, voir
+        ; notes/2026-08-18-vram-direct-patch-plan.md). La zone de code,
+        ; elle, n'est atteignable par aucun debordement de donnees.
+        ;
+        ; COUT : une boucle par colonne au lieu d'un deroulement, donc plus
+        ; lent. Re-deroulable plus tard comme passe d'optimisation separee.
+        ;
+        ; Index d'entree j = (-w) & 15, donc la largeur vaut 16-j pour
+        ; j=0..15 -- c'est la constante portee par chaque stub. Le cas
+        ; degenere w=0 donne j=0 donc 16 colonnes, exactement comme le
+        ; deroulement d'origine (entree 0 = les 16 unites).
+        ; ============================================================
+blit_shift_e00:
+        ld    a,#10
+        jr    blit_shift_run
+blit_shift_e01:
+        ld    a,#0F
+        jr    blit_shift_run
+blit_shift_e02:
+        ld    a,#0E
+        jr    blit_shift_run
+blit_shift_e03:
+        ld    a,#0D
+        jr    blit_shift_run
+blit_shift_e04:
+        ld    a,#0C
+        jr    blit_shift_run
+blit_shift_e05:
+        ld    a,#0B
+        jr    blit_shift_run
+blit_shift_e06:
+        ld    a,#0A
+        jr    blit_shift_run
+blit_shift_e07:
+        ld    a,#09
+        jr    blit_shift_run
+blit_shift_e08:
+        ld    a,#08
+        jr    blit_shift_run
+blit_shift_e09:
+        ld    a,#07
+        jr    blit_shift_run
+blit_shift_e10:
+        ld    a,#06
+        jr    blit_shift_run
+blit_shift_e11:
+        ld    a,#05
+        jr    blit_shift_run
+blit_shift_e12:
+        ld    a,#04
+        jr    blit_shift_run
+blit_shift_e13:
+        ld    a,#03
+        jr    blit_shift_run
+blit_shift_e14:
+        ld    a,#02
+        jr    blit_shift_run
+blit_shift_e15:
+        ld    a,#01
+        jr    blit_shift_run
+blit_shift_run:
+        ld    (var_blit_cols),a
+        ld    (var_blit_width),a
+blit_shift_col:
+        ; corps identique a l'unite deroulee d'origine (18 octets), sauf
+        ; `inc c` -> `inc bc` : l'original ne propageait pas la retenue
+        ; dans B, ce qui repliait l'ecriture 256 octets plus bas quand une
+        ; ligne franchissait une frontiere de page. Inoffensif ou non dans
+        ; le buffer, c'est faux en VRAM ou les debuts de ligne ne sont pas
+        ; alignes. Meme avance nette (+1/colonne).
         ld    a,(de)
         inc    de
         ld    l,a
@@ -469,7 +579,7 @@ fn_blit_masked:
         or    (hl)
         inc    h
         ld    (bc),a
-        inc    c
+        inc    bc
         ld    a,(bc)
         and    (hl)
         inc    h
@@ -478,288 +588,15 @@ fn_blit_masked:
         dec    h
         dec    h
         dec    h
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        inc    h
-        ld    (bc),a
-        inc    c
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        ld    (bc),a
-        dec    h
-        dec    h
-        dec    h
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        inc    h
-        ld    (bc),a
-        inc    c
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        ld    (bc),a
-        dec    h
-        dec    h
-        dec    h
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        inc    h
-        ld    (bc),a
-        inc    c
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        ld    (bc),a
-        dec    h
-        dec    h
-        dec    h
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        inc    h
-        ld    (bc),a
-        inc    c
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        ld    (bc),a
-        dec    h
-        dec    h
-        dec    h
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        inc    h
-        ld    (bc),a
-        inc    c
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        ld    (bc),a
-        dec    h
-        dec    h
-        dec    h
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        inc    h
-        ld    (bc),a
-        inc    c
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        ld    (bc),a
-        dec    h
-        dec    h
-        dec    h
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        inc    h
-        ld    (bc),a
-        inc    c
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        ld    (bc),a
-        dec    h
-        dec    h
-        dec    h
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        inc    h
-        ld    (bc),a
-        inc    c
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        ld    (bc),a
-        dec    h
-        dec    h
-        dec    h
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        inc    h
-        ld    (bc),a
-        inc    c
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        ld    (bc),a
-        dec    h
-        dec    h
-        dec    h
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        inc    h
-        ld    (bc),a
-        inc    c
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        ld    (bc),a
-        dec    h
-        dec    h
-        dec    h
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        inc    h
-        ld    (bc),a
-        inc    c
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        ld    (bc),a
-        dec    h
-        dec    h
-        dec    h
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        inc    h
-        ld    (bc),a
-        inc    c
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        ld    (bc),a
-        dec    h
-        dec    h
-        dec    h
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        inc    h
-        ld    (bc),a
-        inc    c
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        ld    (bc),a
-        dec    h
-        dec    h
-        dec    h
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        inc    h
-        ld    (bc),a
-        inc    c
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        ld    (bc),a
-        dec    h
-        dec    h
-        dec    h
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        inc    h
-        ld    (bc),a
-        inc    c
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        ld    (bc),a
-        dec    h
-        dec    h
-        dec    h
-loc_30AD:
-        ld    a,c
-        add    a,#3A
-        ld    c,a
-        ld    a,b
-        adc    a,#00
-        ld    b,a
-        ex    af,af'
+        ld    a,(var_blit_cols)
         dec    a
-        jp    nz,loc_2F89
-        ret
+        ld    (var_blit_cols),a
+        jr    nz,blit_shift_col
+        jp    blit_row_end
+
 loc_30BB:
+        ; Mise en place de la famille alignee-octet (inchangee sauf le
+        ; multiplicateur x10 -> x4 et la base, desormais symbolique).
         add    a,#02
         ex    af,af'
         ld    a,(de)
@@ -771,12 +608,8 @@ loc_30BB:
         ld    l,a
         ld    h,#00
         add    hl,hl
-        ld    c,l
-        ld    b,h
         add    hl,hl
-        add    hl,hl
-        add    hl,bc
-        ld    bc,#30E3
+        ld    bc,blit_aligned
         inc    de
         ld    a,(de)
         dec    de
@@ -786,157 +619,60 @@ loc_30BB:
         sub    #02
         ex    af,af'
         jp    loc_2F5E
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        dec    h
-        ld    (bc),a
-        inc    c
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        dec    h
-        ld    (bc),a
-        inc    c
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        dec    h
-        ld    (bc),a
-        inc    c
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        dec    h
-        ld    (bc),a
-        inc    c
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        dec    h
-        ld    (bc),a
-        inc    c
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        dec    h
-        ld    (bc),a
-        inc    c
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        dec    h
-        ld    (bc),a
-        inc    c
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        dec    h
-        ld    (bc),a
-        inc    c
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        dec    h
-        ld    (bc),a
-        inc    c
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        dec    h
-        ld    (bc),a
-        inc    c
-loc_3147:
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        dec    h
-        ld    (bc),a
-        inc    c
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        dec    h
-        ld    (bc),a
-        inc    c
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        dec    h
-        ld    (bc),a
-        inc    c
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        dec    h
-        ld    (bc),a
-        inc    c
-        ld    a,(de)
-        inc    de
-        ld    l,a
-        ld    a,(bc)
-        and    (hl)
-        inc    h
-        or    (hl)
-        dec    h
-        ld    (bc),a
-        inc    c
+
+blit_aligned:
+blit_al_e00:
+        ld    a,#10
+        jr    blit_al_run
+blit_al_e01:
+        ld    a,#0F
+        jr    blit_al_run
+blit_al_e02:
+        ld    a,#0E
+        jr    blit_al_run
+blit_al_e03:
+        ld    a,#0D
+        jr    blit_al_run
+blit_al_e04:
+        ld    a,#0C
+        jr    blit_al_run
+blit_al_e05:
+        ld    a,#0B
+        jr    blit_al_run
+blit_al_e06:
+        ld    a,#0A
+        jr    blit_al_run
+blit_al_e07:
+        ld    a,#09
+        jr    blit_al_run
+blit_al_e08:
+        ld    a,#08
+        jr    blit_al_run
+blit_al_e09:
+        ld    a,#07
+        jr    blit_al_run
+blit_al_e10:
+        ld    a,#06
+        jr    blit_al_run
+blit_al_e11:
+        ld    a,#05
+        jr    blit_al_run
+blit_al_e12:
+        ld    a,#04
+        jr    blit_al_run
+blit_al_e13:
+        ld    a,#03
+        jr    blit_al_run
+blit_al_e14:
+        ld    a,#02
+        jr    blit_al_run
+blit_al_e15:
+        ld    a,#01
+        jr    blit_al_run
+blit_al_run:
+        ld    (var_blit_cols),a
+        ld    (var_blit_width),a
+blit_al_col:
         ld    a,(de)
         inc    de
         ld    l,a
@@ -947,4 +683,51 @@ loc_3147:
         dec    h
         ld    (bc),a
         inc    bc
-        jp    loc_30AD
+        ld    a,(var_blit_cols)
+        dec    a
+        ld    (var_blit_cols),a
+        jr    nz,blit_al_col
+        jp    blit_row_end
+
+blit_row_end:
+        ; Fin de ligne, commune aux deux familles (ex-loc_30AD + ex-
+        ; fn_vram_next_row, desormais fusionnees et sans code auto-modifie).
+        ; 1) revenir au debut de la ligne : BC -= largeur
+        ld    a,(var_blit_width)
+        neg
+        add    a,c
+        ld    c,a
+        ld    a,b
+        adc    a,#FF
+        ld    b,a
+        ; 2) avance raster CRTC-aware vers screen_y + 1, soit -0x800 (et
+        ;    +0x37B0 aux franchissements de bande). C'est l'INVERSE de
+        ;    fn_vram_advance_line (+0x800 = screen_y - 1), qui convient au
+        ;    clear mais pas au blit. Le CARRY n'est pas discriminant ici
+        ;    (B >= #C0 pour toute adresse VRAM), d'ou le test du bit 6.
+        ld    a,b
+        sub    #08
+        ld    b,a
+        bit    6,b
+        jr    nz,blit_row_next
+        ld    a,c
+        add    a,#B0
+        ld    c,a
+        ld    a,b
+        adc    a,#3F
+        ld    b,a
+blit_row_next:
+        ; 3) boucle de lignes (compteur dans AF'), inchangee
+        ex    af,af'
+        dec    a
+        jp    nz,loc_2F89
+        ret
+
+var_blit_cols:
+        defb  #00                  ; compteur de colonnes de la ligne courante
+var_blit_width:
+        defb  #00                  ; largeur du sprite (colonnes), pose par le stub
+
+blit_vram_free:
+        ; Debut de la place liberee par la mise en boucle -- accueille
+        ; code/vram_direct_rendering.asm (org blit_vram_free).

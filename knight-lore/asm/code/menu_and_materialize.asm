@@ -5,7 +5,43 @@
 ; ============================================================
         org #170D
 fn_menu_glyph_unpack:
-        ; Menu seulement: déballe un glyphe 4bpp→2bpp vers buffer de travail
+        ; Deballe un glyphe 4bpp->2bpp (8 lignes x 2 octets) a l'adresse HL,
+        ; et rend HL avance de +2 (glyphe suivant, meme ligne) -- contrat
+        ; inchange pour tous les appelants.
+        ;
+        ; ATTENTION, DEUX OCTETS AUTO-MODIFIES : les operandes des `and`
+        ; ci-dessous (glyph_attr_mask_left / _right) sont l'OCTET
+        ; D'ATTRIBUT DE COULEUR, ecrase a chaque appel par l'appelant
+        ; (fn_menu_draw_string #16E5, fn_hud_render_day_counter,
+        ; fn_hud_render_secondary_counter, fn_game_over_or_daycycle_end).
+        ; Le #FF ecrit ici n'est qu'une valeur au repos : ce ne sont PAS
+        ; des `and #FF` inutiles. Les appelants les designaient par
+        ; adresse litterale (#172C / #173C) ; ils utilisent desormais ces
+        ; deux labels, pour que toute reecriture de cette routine soit
+        ; suivie automatiquement par l'assembleur.
+        ;
+        ; [vram-direct 2026-08-19] Destination migree du BUFFER vers la
+        ; VRAM. Deux seuls changements de fond :
+        ;  1) l'avance de ligne. Le buffer est LINEAIRE (#9000 + y*64), donc
+        ;     -64 = y-1. La VRAM est ENTRELACEE : y-1 = +#0800, avec la
+        ;     correction +#C050 au franchissement de bande -- exactement le
+        ;     mecanisme de fn_clear_screen et de fn_vram_advance_line. On ne
+        ;     peut pas appeler fn_vram_advance_line ici : elle passe par DE,
+        ;     qui porte le pointeur de donnees du glyphe (vivant). Le calcul
+        ;     est donc inline via BC, deja sauvegarde/restaure a cet endroit
+        ;     dans le code d'origine.
+        ;  2) le retour a HL+2. L'original y arrivait par arithmetique
+        ;     (8 x -64 puis +#0202) ; en VRAM l'avance n'est pas lineaire,
+        ;     donc l'adresse de depart est simplement empilee et redepilee.
+        ;
+        ; Budget des 66 octets d'origine (#174F et la suite -- #175F, #176B,
+        ; #178D -- sont appeles par adresse litterale depuis d'autres
+        ; fichiers, la longueur est donc contrainte) : le `dec hl` de fin de
+        ; ligne disparait (l'avance part de HL+1 avec #07FF au lieu de HL
+        ; avec #0800 : meme somme, meme carry) et le calcul de nibbles est
+        ; reordonne -- masque d'abord, rotation ensuite -- pour un resultat
+        ; strictement identique en 3 octets de moins par moitie. Total 65,
+        ; complete par 1 nop.
         push    bc
         push    de
         push    hl
@@ -18,45 +54,54 @@ fn_menu_glyph_unpack:
         add    hl,de
         ex    de,hl
         pop    hl
+        push    hl                   ; adresse de depart, relue a la fin
         ld    b,#08
-loc_171F:
-        ld    a,(de)
-        rrca
-        rrca
-        rrca
-        rrca
-        and    #0F
-        ld    c,a
+glyph_row:
+        ; octet gauche : nibble haut duplique sur les 2 nibbles
         ld    a,(de)
         and    #F0
+        ld    c,a
+        rrca
+        rrca
+        rrca
+        rrca
         or    c
-        and    #FF
+        and    #FF                   ; <- operande auto-modifiee (attribut)
+glyph_attr_mask_left equ $-1
         ld    (hl),a
         inc    hl
+        ; octet droit : nibble bas duplique sur les 2 nibbles
         ld    a,(de)
         and    #0F
         ld    c,a
-        ld    a,(de)
         rlca
         rlca
         rlca
         rlca
-        and    #F0
         or    c
-        and    #FF
+        and    #FF                   ; <- operande auto-modifiee (attribut)
+glyph_attr_mask_right equ $-1
         ld    (hl),a
-        dec    hl
+        ; ligne suivante vers le bas de l'ecran (screen_y - 1) ; HL est a
+        ; depart+1, d'ou #07FF et non #0800
         inc    de
         push    bc
-        ld    bc,#FFC0
+        ld    bc,#07FF
         add    hl,bc
+        jr    nc,glyph_row_next
+        ld    bc,#C050
+        add    hl,bc
+glyph_row_next:
         pop    bc
-        djnz    loc_171F
+        djnz    glyph_row
+        pop    hl
+        inc    hl
+        inc    hl
         pop    de
-        ld    bc,#0202
-        add    hl,bc
         pop    bc
         ret
+        nop
+        ASSERT $ - fn_menu_glyph_unpack == #42   ; 66 octets, #174F preserve
         and    a
         jr    nz,loc_1759
 loc_1752:
@@ -99,7 +144,7 @@ loc_176B:
         ret    nz
         inc    a
         ld    (#007E),a
-        jp    fn_copy_screen_rect
+        jp    fn_vram_merge_buffer_to_screen
 loc_178D:
         push    bc
         push    de
@@ -226,10 +271,16 @@ loc_1816:
         ld    a,(ix+off_screen_y)
         add    a,#17
         ld    h,a
-        call    fn_buffer_addr_from_vram
+        ; [vram-direct] fn_vram_addr_from_yx rend maintenant une adresse
+        ; VRAM : l'effacement doit donc passer par fn_vram_fill_rect
+        ; (avance +#0800/ligne) et non fn_fill_rect (-64/ligne, buffer).
+        ; Meme sens de parcours (screen_y - 1), meme longueur d'appel.
+        ; BC = #0618 (la resolution symbolique du generateur est fortuite,
+        ; c'est une constante largeur/hauteur : B=6 octets, C=24 lignes).
+        call    fn_vram_addr_from_yx
         ld    bc,fn_render_workload_pacing_delay
         xor    a
-        call    fn_fill_rect
+        call    fn_vram_fill_rect
         pop    hl
         ld    a,(hl)
         and    a
@@ -244,7 +295,7 @@ loc_184F:
         call    fn_screen_addr_from_bc
         ld    l,c
         ld    h,b
-        call    fn_buffer_addr_from_vram
+        call    fn_vram_addr_from_yx
         ld    bc,#1806
         ld    a,(var_render_disabled_flag)
         and    a

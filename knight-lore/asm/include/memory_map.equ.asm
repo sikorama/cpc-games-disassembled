@@ -62,7 +62,14 @@ var_player_room_number          equ     #00DF   ; confirmed -- struct_entities_b
 var_day_night_flag              equ     #1CFA   ; hypothesis (multi-bits) -- bit0 = jour/nuit, bit2 = role distinct
 
 ; --- Constantes de boot ---
-STACK_TOP_INIT                   equ     #8100   ; valeur chargee dans SP par fn_cold_boot_entry/fn_boot_init_and_new_game
+; [branche vram-direct-experiment, 2026-08-19] STACK_TOP_INIT n'est plus
+; #8100 : l'objectif est de liberer tout #8000-#BFFF pour un double
+; buffer, la pile est donc descendue dans zone_stack (#2D9B-#2DE1, 71
+; octets fabriques dans la zone de code -- voir le commentaire de
+; zone_stack dans code/rendering_pipeline.asm). C'est un LABEL, pas un
+; EQU : la valeur suit automatiquement le decoupage du fichier.
+STACK_TOP_INIT                   equ     zone_stack_top
+TBL_BITSCATTER_BASE              equ     #8100   ; base des tables masque/couleur construites au boot par fn_build_pixel_bitscatter_tables (ex-usage de STACK_TOP_INIT comme adresse de donnees, sans rapport avec la pile)
 
 ; --- Zones haute memoire de reference SEULEMENT (aucun org/donnees) ---
 ; Ni le buffer de pre-rendu ni la VRAM ne contiennent de contenu charge
@@ -84,4 +91,7 @@ VRAM_BASE                        equ     #C000   ; ecran physique CPC (RAM bank 
 ; support d'origine, pas de la RAM inutilisee non plus, juste du contenu
 ; RECONSTRUIT par du code qu'on a deja. Voir
 ; notes/2026-08-09-zone-8000-9000-gap.md pour le detail complet.
-STACK_LOW_WATERMARK               equ     #8010   ; borne basse observee/calculee de la pile active
+; STACK_LOW_WATERMARK (#8010) SUPPRIME : cette borne etait la
+; consequence de la file de blits differes (40 entites x 6 octets = 240,
+; soit #8100-#8010 pile). Cette file est supprimee sur cette branche, la
+; pile ne consomme plus que l'imbrication d'appels.

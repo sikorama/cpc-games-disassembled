@@ -45,19 +45,34 @@
 ; tables a extent confirmee sont transcrites, voir asm/README.md ---
         include "data/resources_zone.asm"                 ; #4046-#7FFF
 
-; --- #8000-#80FF (source original / branche main) : AUCUN org/donnees.
-; Pile Z80 active dans #80D6-#8100 (confirmed, SP init #8100) -- RAM
-; d'execution pure, jamais du contenu charge depuis le support d'origine.
+; --- #8000-#80FF : sur main, RAM d'execution pure contenant la pile Z80
+; active (#80D6-#8100, SP init #8100). Sur la branche
+; vram-direct-experiment, la pile a ETE DEPLACEE dans zone_stack
+; (#2D9B-#2DE1, code/rendering_pipeline.asm) et cette zone est LIBRE --
+; premiere etape vers la liberation complete de #8000-#BFFF pour un
+; double buffer. Reste a reloger pour y arriver : les 15 tables de 256
+; octets #8100-#8FFF (TBL_BITSCATTER_BASE, lues a chaque octet par
+; fn_blit_masked, contrainte d'alignement page) -- voir
+; notes/2026-08-18-vram-direct-patch-plan.md.
 
 ; --- BRANCHE vram-direct-experiment UNIQUEMENT : code NEUF (pas issu du
-; desassemblage) a #8100, dans la table que fn_build_pixel_bitscatter_tables
-; construisait avant neutralisation de ce sous-bloc (voir
-; code/dispatch_and_sound.asm, #0854-#086E) -- CONFIRMEE sans lecteur dans
-; tout le jeu, donc reellement libre en permanence (pas de buffer
-; intermediaire ecrasant cette zone, contrairement a #9000+). Voir statut
-; en tete de code/vram_direct_rendering.asm et
+; desassemblage), org blit_vram_free (#3094), dans la place liberee en
+; remplacant les familles deroulees de fn_blit_masked par de vraies
+; boucles -- donc DANS la zone de code, avant #3186. #8100, choisi le
+; 2026-08-18, etait un mauvais emplacement (c'est STACK_TOP_INIT, la zone
+; est ecrasee en jeu) et la neutralisation du sous-bloc
+; fn_build_pixel_bitscatter_tables qui l'accompagnait a ete annulee. Voir
+; statut en tete de code/vram_direct_rendering.asm et
 ; notes/2026-08-18-vram-direct-patch-plan.md.
-        include "code/vram_direct_rendering.asm"          ; #8100-#81FF (NEUF)
+        include "code/vram_direct_rendering.asm"          ; #3094-#316C (NEUF, dont fn_clear_screen relogee)
+
+; --- BRANCHE vram-direct-experiment UNIQUEMENT : #9000+ accueille
+; desormais du code NEUF. C'etait interdit tant que fn_blit_masked et
+; fn_clear_intermediate_buffer visaient cette zone ; ces deux chemins sont
+; migres, et le .sna reassemble ne contient plus un seul octet non nul
+; dans #9000-#BFFF (plus aucune reference a BUF_PRERENDER_BASE dans
+; asm/code/). Voir notes/2026-08-18-vram-direct-patch-plan.md.
+        include "code/vram_clip_rendering.asm"            ; #9000+ (NEUF)
 
 ; --- #8200-#8FFF (source original / branche main) : AUCUN org/donnees
 ; ci-dessous -- 14 tables de 256 octets CALCULEES AU BOOT (une seule fois,

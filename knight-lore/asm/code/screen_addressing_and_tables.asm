@@ -4,19 +4,42 @@
 ; Ne pas editer les blocs de code a la main : relancer le generateur.
 ; ============================================================
         org #3186
-fn_buffer_addr_from_vram:
-        ; HL_dest = (HL_vram >> 2) + 0x9000 — convertit une adresse VRAM en
-        ; pointeur buffer intermédiaire (même routine réutilisée pour le menu,
-        ; calcul identique)
+fn_vram_addr_from_yx:
+        ; EX-fn_buffer_addr_from_vram (nom d'origine trompeur : son entree
+        ; n'est PAS une adresse VRAM mais un couple de coordonnees ecran
+        ; H=screen_y / L=screen_x, et sa sortie etait
+        ; #9000 + y*64 + x/4, soit un pointeur dans le BUFFER).
+        ;
+        ; [vram-direct 2026-08-19] Produit desormais l'adresse VRAM REELLE
+        ; du meme point, en deleguant a fn_screen_addr_from_bc juste
+        ; en-dessous. C'est la derniere ecriture vers #9000-#BFFF qui est
+        ; ainsi supprimee : tout le chemin glyphes (texte de menu / game
+        ; over, compteurs HUD, notification de slot) passait par ici.
+        ;
+        ; La correspondance est EXACTE, pas une approximation : la copie
+        ; plein ecran d'origine appariait buffer #BFC0 avec VRAM #C008, et
+        ; #BFC0 = #9000 + 191*64 + 0 soit (y=191, colonne 0) ; or
+        ; fn_screen_addr_from_bc(B=191, C=0) donne bien #C008 (bande
+        ; 191>>3 = 23, tbl_screen_line_base[23] = #0000, +8 de decalage de
+        ; colonne). Le mapping buffer->VRAM du jeu EST donc
+        ; fn_screen_addr_from_bc(y, colonne*4), decalage +8 inclus.
+        ;
+        ; IN  : H=screen_y, L=screen_x. OUT : HL=adresse VRAM.
+        ; Preserve BC/DE. 4 nop pour conserver les 15 octets d'origine
+        ; (fn_screen_addr_from_bc doit rester a #3195).
         push    bc
-        srl    h
-        rr    l
-        srl    h
-        rr    l
-        ld    bc,BUF_PRERENDER_BASE
-        add    hl,bc
+        push    de
+        ld    b,h
+        ld    c,l
+        call    fn_screen_addr_from_bc
+        ex    de,hl
+        pop    de
         pop    bc
         ret
+        nop
+        nop
+        nop
+        nop
 fn_screen_addr_from_bc:
         ; (B,C) -> adresse VRAM CPC complète (table de correspondance ligne +
         ; calcul colonne)

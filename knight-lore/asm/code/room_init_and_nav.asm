@@ -59,7 +59,7 @@ fn_init_room:
         jr    z,loc_2A71
         call    fn_object_catalog_writeback
 loc_2A71:
-        call    fn_clear_intermediate_buffer
+        call    fn_vram_clear_playfield_and_buffer
         call    fn_load_room_data
         call    fn_instantiate_room_objects
         call    fn_room_transition

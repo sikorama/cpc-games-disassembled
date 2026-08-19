@@ -399,15 +399,34 @@ fn_hud_day_night_cycle:
         ld    a,(hl)
         ld    (ix+off_screen_y),a
 loc_1C6E:
-        ld    bc,#1F0C
-        ld    hl,#97EE
+        ; [vram-direct 2026-08-19] Effacement de l'arc soleil/lune : il
+        ; visait le BUFFER (#97EE, soit y=31 x=184 -- fn_fill_rect
+        ; descendant a -64/ligne jusqu'a y=1, ce sont bien les ecritures
+        ; #902E-#97F9 observees, dont la zone #9100 signalee), alors que
+        ; l'icone se dessine maintenant directement en VRAM : d'ou la
+        ; TRAINEE derriere le soleil/la lune.
+        ;
+        ; Redirige vers fn_vram_fill_rect a l'adresse VRAM #C676, celle
+        ; que le code d'origine appariait deja avec #97EE pour
+        ; fn_blit_copy_line (dernier `ld de,#C676` de cette routine) --
+        ; donc pas un calcul nouveau, la paire est celle du jeu. Meme sens
+        ; d'avance (buffer -64/ligne = VRAM +0x800/ligne = y-1), meme
+        ; rectangle 12 octets x 31 lignes.
+        ;
+        ; Les 3 instructions d'echange B<->C disparaissent (fn_vram_fill_rect
+        ; a la meme convention B=largeur/C=hauteur, on charge donc #0C1F
+        ; directement) ; 3 nop conservent les 15 octets d'origine.
+        ; push bc/push hl sont gardes pour l'equilibre de pile avec les
+        ; pop de la queue (devenue morte, voir plus bas).
+        ld    bc,#0C1F
+        ld    hl,#C676
         push    bc
         push    hl
-        ld    a,c
-        ld    c,b
-        ld    b,a
         xor    a
-        call    fn_fill_rect
+        call    fn_vram_fill_rect
+        nop
+        nop
+        nop
         call    #2F2B
         ld    ix,#1877
         ld    (ix+off_flags),#00
@@ -418,6 +437,10 @@ loc_1C6E:
         ld    (ix+off_screen_x),#D0
         ld    (ix+off_type),#BA
         call    #2F2B
+        ; [vram-direct] Queue MORTE : fn_blit_copy_line est neutralisee
+        ; (`ret`), le dessin et l'effacement se font tous les deux
+        ; directement en VRAM ci-dessus. Laissee en place telle quelle
+        ; (longueur preservee) ; les pop equilibrent les push du debut.
         pop    hl
         pop    bc
         ld    de,#C676
@@ -463,7 +486,7 @@ fn_hud_icon_redraw_8x4:
         call    fn_screen_addr_from_bc
         ld    l,c
         ld    h,b
-        call    fn_buffer_addr_from_vram
+        call    fn_vram_addr_from_yx
         ld    bc,#0804
         jp    fn_blit_copy_line
 tbl_hud_sun_moon_height_curve:

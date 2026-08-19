@@ -331,6 +331,272 @@ entités qui disparaissent), c'est le signal immédiat que la fonction
 patchée a d'autres responsabilités que celle identifiée — annuler le
 patch tout de suite plutôt que d'essayer de "réparer autour".
 
+## 7sexies. Inventorier ce qui « n'est plus fait par personne » avant de neutraliser une routine
+
+Prolonge 7quinquies, sur un autre axe. 7quinquies met en garde contre les
+effets de bord **internes** à la routine qu'on neutralise (des calculs
+préalables au comportement visé). Ce piège-ci est plus vicieux : la
+routine peut être le **seul producteur** d'un état visible qu'aucune
+lecture de son code ne laisse deviner, parce que l'effet naît de la
+COMBINAISON routine + état de ses entrées.
+
+Cas d'école (Knight Lore, migration vers le dessin direct en VRAM) : une
+routine de copie en bloc `buffer -> VRAM`, neutralisée parce qu'elle
+écrasait le nouveau chemin de dessin. Elle portait en réalité trois
+rôles, dont un seul apparaissait dans son corps :
+
+1. le dessin (le rôle visible, celui qu'on voulait supprimer) ;
+2. **l'effacement plein écran** — le buffer source venait d'être remis à
+   zéro par une autre routine, donc la copie effaçait *de fait* l'écran.
+   Aucun `clear` n'apparaît dans son code : l'effet vient de ce que la
+   source est vide. Personne d'autre ne l'assurait ;
+3. **la composition d'un second plan** — tout ce qui se dessinait dans le
+   buffer par un autre chemin (texte de menu, compteurs HUD) n'atteignait
+   la VRAM que par cette copie.
+
+Neutraliser la routine a donc corrigé le symptôme visé et créé deux
+régressions sans rapport apparent (« plus rien ne s'efface au changement
+de salle », « au menu on ne voit que le décor, plus le texte »).
+
+**Règle** : avant de neutraliser une routine, la question « quel code
+devient mort ? » ne suffit pas. Poser en plus, appelant par appelant :
+**quel état visible cette routine était-elle SEULE à produire ?** Pour
+une routine qui écrit dans une zone partagée, examiner l'état de ses
+ENTRÉES à chaque site d'appel — une copie dont la source est vide est un
+effacement, une copie dont la source est un plan de texte est un
+compositeur. Le nom et le corps ne le diront pas.
+
+**Corollaire d'ordonnancement.** Une même opération peut être correcte ou
+destructrice selon sa **position dans la frame**. Ici l'effacement plein
+écran était juste ; c'est son placement *après* le dessin qui était faux.
+Un « clear » qui apparaît après un « draw » dans la boucle principale est
+la signature d'un double-buffer implicite : le supprimer casse le clear,
+le **déplacer en amont** du dessin le préserve. Réflexe : quand une
+routine doit disparaître, se demander d'abord si un de ses rôles doit
+simplement **changer de place** dans le cycle.
+
+**Corollaire de composition.** Pour faire cohabiter un plan hérité
+(dessiné dans un buffer) avec un nouveau plan (dessiné directement dans
+la cible), une copie **transparente** — même parcours, mais on saute les
+octets nuls de la source — restaure le plan hérité sans détruire le
+nouveau, pour quelques octets de code et sans toucher aux appelants.
+Étape intermédiaire très rentable quand la migration complète du plan
+hérité est un gros chantier : la granularité est l'octet et non le pixel,
+mais c'est déjà celle de la copie d'origine, donc sans régression.
+
+## 7septies. La pile comme structure de données : ce qui fait vraiment la profondeur de pile
+
+Avant de déplacer une pile Z80 dans un espace restreint, ne pas déduire sa
+taille de l'imbrication d'appels. Sur un moteur 8 bits, la pile est
+souvent utilisée **comme file ou tableau temporaire**, et c'est cet usage,
+pas les `call`, qui fixe la borne basse.
+
+Cas d'école (Knight Lore) : la borne basse documentée était 240 octets
+sous `SP` init, ce qui semblait interdire de reloger la pile dans les
+quelques dizaines d'octets récupérables. En réalité une routine de rendu
+empilait 3 registres 16 bits par entité « sale » et une boucle ultérieure
+les dépilait pour traiter chaque élément — 40 entités × 6 octets = **240
+exactement**. Ce n'était pas de la profondeur d'appel, c'était une file
+d'attente de travaux différés. L'imbrication réelle d'appels tenait dans
+~15 octets.
+
+**Signes d'une pile utilisée comme structure de données** : un compteur en
+RAM incrémenté à côté du `push` (il compte les éléments, pas les appels) ;
+une boucle qui `pop` N fois en se pilotant sur ce compteur plutôt que sur
+un `ret` ; des `push` et `pop` dans des routines différentes. Chercher
+`push`/`pop` non appariés **dans la même routine**.
+
+**Conséquence pratique** : si le producteur de la file devient mort lors
+d'une migration, la profondeur de pile s'effondre et un espace jugé
+inatteignable devient suffisant. Vérifier la borne dans les deux sens —
+un chiffre de watermark hérité peut mesurer un usage qui n'existe plus.
+
+**Où trouver l'espace** quand aucun bloc libre ne subsiste : le
+**fabriquer** dans la zone de code, en récupérant des routines devenues
+mortes ou en relogeant une routine vivante vers un trou ailleurs (ses
+appelants qui l'invoquent par symbole n'ont rien à changer). Placer la
+zone juste **sous** du code vivant est correct puisque la pile descend :
+un débordement va vers le bas, jamais vers le code au-dessus. Et déclarer
+le sommet comme **label** (`ds N` suivi d'un label) plutôt que comme
+constante littérale — la valeur suit alors automatiquement le découpage du
+fichier.
+
+**Piège de nommage associé** : un `EQU` unique peut servir deux rôles sans
+rapport. Ici `STACK_TOP_INIT = #8100` était à la fois le sommet de pile
+**et** la base d'une table de données à la même adresse — deux usages
+identiques tant que rien ne bouge, divergents dès qu'on déplace la pile.
+Avant de changer la valeur d'une constante, relire **chaque** site
+d'utilisation et se demander s'il parle bien du même objet.
+
+## 7octies. Recenser les cibles de code auto-modifiant AVANT de réécrire une routine
+
+Sur du code 8 bits, un octet au milieu d'une instruction peut être une
+**variable** écrite ailleurs. Une instruction qui semble inutile est peut-être
+juste une instruction dont l'opérande est encore à sa valeur au repos.
+
+Cas d'école (Knight Lore) : un décodeur de glyphes contenait deux `and #FF`,
+pris pour des no-op et supprimés lors d'une réécriture. C'étaient les octets
+d'**attribut de couleur** : quatre appelants pokaient l'attribut directement
+dans ces opérandes. Pire, la nouvelle disposition a fait tomber une de ces
+adresses sur le **déplacement d'un `jr`** — chaque appel écrasait donc la
+cible d'un saut avec une valeur de couleur.
+
+**Procédure, avant de toucher à une routine** : recenser dans TOUT le
+projet les écritures vers des adresses de la zone de code
+(`grep -rnoE "ld +\(#[0-9A-F]{4}\),(a|hl|bc|de)"`, plus les variantes
+`ld (nn),reg` de la cible), extraire la liste d'adresses, et vérifier
+qu'aucune ne tombe dans l'intervalle réécrit. Fait une fois, la liste sert
+pour toute la session.
+
+**Correctif durable** : remplacer les pokes littéraux par un **label sur
+l'opérande** (`glyph_and: and #FF` / `glyph_attr equ $-1`, puis
+`ld (glyph_attr),a` chez l'appelant). L'assembleur suit alors
+automatiquement toute réécriture. Compléter par un `ASSERT` sur la longueur
+de la routine quand des adresses suivantes sont, elles, appelées en dur.
+
+**Indices qu'un octet « inutile » est en fait une variable** : une opération
+avec un opérande neutre (`and #FF`, `or #00`, `add a,#00`, `jp` vers l'adresse
+suivante) ; la même valeur écrite dans deux opérandes voisins par le même
+appelant ; une adresse de poke qui n'est ni en RAM basse ni dans une table.
+
+**Corollaire de diagnostic** : un motif visuel régulier trahit l'arithmétique
+qui l'a produit. « Diagonale vers la gauche, 16 octets par ligne » sur un
+écran CPC (80 octets/ligne caractère, `+#800` par ligne raster) = un pas de
++64 au lieu du bon entrelacement — depuis `#C008`, `+64` donne `#C048`,
+`#C088`, `#C0C8`, soit une ligne caractère plus bas et 16 octets à gauche à
+chaque pas. Lire le pas dans la géométrie du glitch avant d'ouvrir le code.
+
+## 7nonies. Un buffer intermédiaire est souvent aussi une FENÊTRE DE PUBLICATION
+
+Quand un moteur dessine dans un buffer puis recopie vers l'écran **par
+rectangles** (dirty rects), le buffer joue deux rôles, et un seul est
+visible dans son propre code :
+
+1. **plan de composition** — là où les sprites se superposent ;
+2. **fenêtre de publication** — ce rôle ne vit pas dans le buffer mais dans
+   la routine de copie, sous la forme du rectangle qu'elle recopie. Tout ce
+   qu'un sprite écrit hors de ces rectangles n'atteint jamais l'écran.
+
+Le rôle 2 permet au plan de composition d'être **localement FAUX** hors des
+rectangles copiés, sans conséquence : la zone sera réparée (toutes les
+entités qui la chevauchent sont remarquées et redessinées dans l'ordre de
+profondeur) avant d'être publiée. C'est un schéma **paresseux**, et il est
+invisible à la lecture : rien ne le documente, aucun test ne le vérifie.
+
+**Conséquence pour une migration vers le dessin direct** : supprimer le
+buffer supprime la fenêtre, et **durcit des invariants qui n'étaient que
+paresseux**. Ce qui n'était qu'une corruption locale tolérée devient un
+défaut visible immédiatement. Cas d'école (Knight Lore) : un bloc de décor
+remarqué se redessinait *en entier* et écrasait un objet situé devant lui,
+loin du rectangle sale — invisible via le buffer, visible en dessin direct.
+Signature du symptôme : **le défaut dépend du sens de déplacement**, parce
+que le rectangle sale s'étend dans la direction du mouvement et décide donc
+quelles entités voisines sont remarquées.
+
+**Question à poser avant de supprimer un buffer** : non pas « qui écrit
+dedans ? » (on l'a déjà fait, voir 7sexies) mais **« qu'est-ce que sa copie
+PARTIELLE cachait ? »**. Lister les invariants que la copie rendait
+inutiles à maintenir. En rendu, il y en a typiquement un : *le composite
+n'a besoin d'être juste que dans les zones publiées*.
+
+**Réparations possibles**, par ordre de fidélité décroissante : écrêter le
+dessin aux zones publiées (fidèle, mais coûteux dans la boucle chaude) ;
+étendre le marquage « à redessiner » jusqu'au point fixe (conserve
+l'optimisation, ensemble redessiné minimal) ; tout redessiner chaque frame
+(trivialement correct, mais renonce à l'optimisation que le moteur
+implémentait).
+
+## 7decies. Blit à décalage sub-octet : deux largeurs distinctes, à ne jamais confondre
+
+Un blit qui gère un décalage sub-octet (sprite non aligné sur la grille
+d'octets) écrit **2 octets écran adjacents par colonne de données**. Il y a
+donc deux largeurs différentes, et elles diffèrent de 1 :
+
+- **largeur de données** `w` : octets par ligne dans le bitmap source, c'est
+  le pas de ligne pour avancer le pointeur de forme ;
+- **étendue écran** `w+1` : nombre d'octets écran touchés, c'est ce qui sert
+  aux bounding boxes, aux rectangles sales et aux tests de chevauchement.
+
+La variante alignée, elle, a les deux égales — d'où un piège asymétrique :
+un code qui confond les deux **fonctionne pour les sprites alignés et casse
+pour les autres**. Comme l'alignement dépend de la position à l'écran, le
+défaut paraît aléatoire ou lié au type de sprite, alors qu'il ne dépend que
+de `screen_x & 3`.
+
+**Signature du symptôme** : si la largeur confondue sert de pas de ligne
+dans les données, chaque ligne est décalée d'un octet de plus que la
+précédente — le sprite part **en diagonale / cisaillé vers la droite** et
+paraît « trop large ». (À ne pas confondre avec la diagonale d'un mauvais
+pas de ligne écran, voir 7octies : ici c'est la SOURCE qui dérive, là
+c'était la DESTINATION.)
+
+**Conséquence pour un écrêtage** : l'intersection se calcule en colonnes
+écran, mais s'applique en colonnes de données. La conversion n'est pas une
+simple soustraction — la colonne de données `i` intersecte la fenêtre
+`[c0, c1]` si `col0+i <= c1` ET `col0+i+1 >= c0`, ce qui donne un `-1` sur
+le début et un plafonnement à `w-1` sur la fin.
+
+**Et l'écrêtage ne peut pas être exact au byte près sans traitement
+particulier des bords** : la colonne de bord écrit forcément un octet
+au-delà de la fenêtre. Il faut un corps de colonne dédié — « 2e octet
+seulement » à gauche, « 1er octet seulement » à droite — sinon il reste un
+liseré de la largeur d'un octet. Vérifier que les deux rognages ne peuvent
+pas être demandés sur une même colonne avant de simplifier le code.
+
+## 7undecies. Une structure « gaspilleuse » achète souvent un INVARIANT FAIBLE — la chiffrer avant de la supprimer
+
+Prolonge 7nonies. En rétro-ingénierie, la tentation est constante : une
+structure de données occupe beaucoup de mémoire, on suppose qu'elle est un
+gaspillage et on entreprend de la supprimer. Il faut d'abord identifier
+**quel invariant elle permet de NE PAS tenir**.
+
+Cas d'école (Knight Lore, CPC). Un buffer de composition de 12 Ko, dont seuls
+les **rectangles sales** étaient recopiés vers l'écran. Le buffer pouvait donc
+être **localement faux** : l'invariant tenu n'était pas « le plan de
+composition est correct » mais « il est correct dans les zones qu'on est sur
+le point de publier ». Une zone corrompue hors rectangle ne se voyait pas, et
+se réparait d'elle-même en devenant publiable.
+
+Cet invariant faible faisait disparaître deux problèmes durs, invisibles tant
+qu'on ne l'avait pas supprimé :
+
+1. aucune **fermeture transitive** du marquage « à redessiner » à calculer —
+   mesuré ensuite : elle cascade à la scène entière, le décor étant un
+   maillage connexe ;
+2. aucun **écrêtage** dans la boucle de dessin — la copie écrêtait
+   gratuitement, avec la primitive la moins chère de la machine.
+
+Résultat mesuré : la version « sans la structure gaspilleuse », une fois
+rendue correcte **et** optimisée, reste plus lente que l'originale. La
+structure n'était pas de la mémoire perdue, c'était de la mémoire **échangée
+contre de la simplicité algorithmique**.
+
+**Méthode à appliquer avant de supprimer une structure coûteuse :**
+
+1. Lister ce qu'elle permet de ne pas faire, pas seulement ce qu'elle
+   contient. Regarder ses **consommateurs partiels** : une routine qui n'en
+   lit qu'une partie révèle un invariant restreint.
+2. Chiffrer le coût de remplacement **en cycles**, pas en octets. Ici :
+   `LDIR` à 21 cycles/octet sur quelques centaines d'octets, contre une
+   arithmétique d'écrêtage dans la boucle la plus chaude.
+3. Si le remplacement échoue en performance, **le dire et le documenter** :
+   c'est un résultat, pas un échec. Il ferme définitivement une piste et
+   explique un choix de conception d'origine.
+
+**Signe qu'on est dans ce cas** : la suppression fait apparaître des défauts
+qui n'ont aucun rapport apparent avec la structure retirée (ordre d'affichage,
+rémanences, dépendance au sens de déplacement). Ce ne sont pas des bugs
+d'implémentation, ce sont des invariants qui étaient tenus gratuitement et ne
+le sont plus.
+
+**Corollaire de plateforme.** Une architecture d'origine se juge sur SA
+machine. Le même moteur sur une machine où le blit est structurellement moins
+cher (moins de bits par pixel, décalage sub-octet en une rotation au lieu
+d'une table de correspondance) a une marge tout autre, et le portage a pu
+faire des choix opposés. Avant de qualifier une conception de sous-optimale,
+refaire l'arithmétique de la plateforme cible : taille d'écran, bits par
+pixel, coût d'un décalage.
+
 ## 9bis. Forcer l'exécution d'une routine arbitraire sans API d'écriture de registres
 
 Certaines API d'émulateur ne permettent d'écrire QUE la RAM et de

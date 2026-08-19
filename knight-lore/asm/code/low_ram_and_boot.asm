@@ -279,6 +279,11 @@ fn_arm_room_transition_flag_and_wait:
         set    0,(hl)
         call    fn_wait_keyboard_sync
         call    fn_melkhior_room_spawn_check
+        ; [vram-direct 2026-08-19] fn_mark_closure_then_cull a ete branchee
+        ; ici puis DEBRANCHEE : mesure en jeu, la fermeture du marquage
+        ; cascade jusqu'a toute la scene des qu'un rectangle sale existe
+        ; (les blocs de decor se touchent tous, la fermeture transitive est
+        ; donc la salle entiere). Voir code/vram_direct_rendering.asm.
         call    fn_cull_entities
         call    fn_render_entities
 fn_render_workload_pacing_delay:
@@ -318,7 +323,7 @@ fn_render_disabled_one_time_setup:
         call    fn_hud_render_minifont_message
         call    fn_hud_render_day_counter
         call    fn_hud_render_secondary_counter
-        call    fn_copy_screen_rect
+        call    fn_vram_merge_buffer_to_screen
         call    fn_gate_array_palette_cycle
         call    fn_reset_all_entity_processing_flag
 loc_0654:
