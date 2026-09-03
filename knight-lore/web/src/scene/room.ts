@@ -113,7 +113,11 @@ export class LoadedRoom {
 
 const textureCache = new Map<string, Promise<WebGLTexture>>();
 
-function getTexture(gl: WebGL2RenderingContext, url: string): Promise<WebGLTexture> {
+/** Exporté pour scene/guard.ts : le garde réutilise le MÊME cache de
+ * textures (par URL) que les entités de décor, plutôt qu'un nouveau
+ * chargement -- c'est une vraie entité ROM, indexée par
+ * data/spriteManifest.ts comme n'importe quelle autre. */
+export function getTexture(gl: WebGL2RenderingContext, url: string): Promise<WebGLTexture> {
   let cached = textureCache.get(url);
   if (!cached) {
     cached = loadTexture(gl, url);

@@ -2,11 +2,13 @@ import { createGLContext, resizeToDisplaySize } from "./gl/context";
 import { SpriteRenderer, type SpriteDrawCall } from "./gl/spriteBatch";
 import { Camera } from "./render/camera";
 import { rotateGrid, type ViewAngle } from "./render/isoMath";
-import { listRoomIds } from "./data/roomManifest";
+import { listRoomIds, loadGuardSpawns } from "./data/roomManifest";
+import { loadSpriteIndex } from "./data/spriteManifest";
 import { loadRoom, type LoadedRoom, type RoomView } from "./scene/room";
 import { createKeyboardState, type KeyboardState } from "./input/keyboard";
 import { buildObstacles, type Obstacle } from "./physics/obstacles";
 import { createPlayerState, loadPlayerTexture, updatePlayer, PLAYER_PROJ_OFFSET, type PlayerState } from "./scene/player";
+import { createGuardState, updateGuard, guardDrawCalls, type GuardState } from "./scene/guard";
 import { drawTopView } from "./debug/topView";
 import { detectEdgeCrossing, neighborRoomId, repositionForEntry, clampToEdge, type EdgeCrossing } from "./scene/roomTransition";
 
@@ -34,6 +36,7 @@ interface AppState {
   built: RoomView;
   camera: Camera;
   player: PlayerState;
+  guards: GuardState[];
   obstacles: Obstacle[];
   input: KeyboardState;
   /** Chargement de salle en cours (franchissement ou sélecteur) : le
@@ -59,12 +62,21 @@ async function main() {
   }
   select.value = String(DEFAULT_ROOM_ID);
 
+  /** Charge les gardes (scene/guard.ts) présents dans une salle -- entités
+   * ROM réelles, indexées par le MÊME SpriteIndex que le décor statique
+   * (re-fetch léger plutôt que de faire porter ce couplage à LoadedRoom). */
+  async function loadGuards(roomId: number): Promise<GuardState[]> {
+    const [spawns, spriteIndex] = await Promise.all([loadGuardSpawns(roomId), loadSpriteIndex()]);
+    return Promise.all(spawns.map((spawn) => createGuardState(gl, spriteIndex, spawn)));
+  }
+
   // `state` est un objet mutable (pas des `let` séparés) pour que
   // setupControls() et la boucle frame() gardent une référence stable même
   // quand on change de salle ou d'angle.
   const room = await loadRoom(gl, DEFAULT_ROOM_ID);
   const built = room.build(0, false);
   const playerTexture = await loadPlayerTexture(gl);
+  const guards = await loadGuards(DEFAULT_ROOM_ID);
   const state: AppState = {
     room,
     roomId: DEFAULT_ROOM_ID,
@@ -73,6 +85,7 @@ async function main() {
     built,
     camera: new Camera(built.bounds),
     player: createPlayerState(playerTexture.texture, playerTexture.width, playerTexture.height, PLAYER_SPAWN),
+    guards,
     obstacles: buildObstacles(room.getEntities()),
     input: createKeyboardState(window),
     transitioning: false,
@@ -103,6 +116,7 @@ async function main() {
     // téléportation via le sélecteur, pas un franchissement en marchant
     // (voir transitionRoom() pour ce cas).
     state.obstacles = buildObstacles(state.room.getEntities());
+    state.guards = await loadGuards(roomId);
     state.player.gridX = PLAYER_SPAWN.gridX;
     state.player.gridY = PLAYER_SPAWN.gridY;
     state.player.gridZ = PLAYER_SPAWN.gridZ;
@@ -125,6 +139,7 @@ async function main() {
       state.room = await loadRoom(gl, targetRoomId);
       state.roomId = targetRoomId;
       state.obstacles = buildObstacles(state.room.getEntities());
+      state.guards = await loadGuards(targetRoomId);
       repositionForEntry(state.player, crossing);
       // Cadrage repris à zéro, comme changeRoom() -- "coupure franche"
       // entre salles, cohérent avec le jeu d'origine (un écran par salle).
@@ -150,6 +165,9 @@ async function main() {
 
     if (!state.transitioning) {
       updatePlayer(state.player, state.input, state.obstacles, dt);
+      for (const guard of state.guards) {
+        updateGuard(guard, state.obstacles, dt);
+      }
 
       const crossing = detectEdgeCrossing(state.player);
       if (crossing) {
@@ -171,9 +189,13 @@ async function main() {
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     const aspect = canvas.width / canvas.height;
-    const drawCalls = [...state.built.drawCalls, playerDrawCall(state)];
+    const drawCalls = [
+      ...state.built.drawCalls,
+      playerDrawCall(state),
+      ...state.guards.flatMap((guard) => guardDrawCalls(guard, state.view)),
+    ];
     renderer.draw(state.camera.getView(), state.camera.getProjection(aspect), drawCalls);
-    drawTopView(topViewCtx, topViewCanvas.width, state.obstacles, state.player);
+    drawTopView(topViewCtx, topViewCanvas.width, state.obstacles, state.player, state.guards);
     updateHud(state);
     requestAnimationFrame(frame);
   }
