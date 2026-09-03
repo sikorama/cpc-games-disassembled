@@ -1125,3 +1125,46 @@ ait été nécessaire en pratique.
 
 Prochaine étape du cap : couleurs réelles des sprites (mapping pen→encre
 CPC).
+
+### 12quater. Étape 3 (couleurs des sprites) — tentée puis ANNULÉE — 2026-09-03/04
+
+`tools/sprite_dump.py::shape_to_image()` calculait déjà la valeur de pen
+(0-3, Mode 1 CPC confirmé) par pixel mais l'aplatissait en niveau de
+gris ; rendu en RGBA tenté (`CPC_HARDWARE_PALETTE`, 27 encres
+matérielles, donnée publique standard). Pen 0 = transparent (alpha 0) :
+confirmé par le mécanisme de blit masqué d'origine, pas une hypothèse —
+ce point reste valable pour une future tentative.
+
+**Hypothèse non vérifiée testée, invalidée par le résultat visuel** :
+`PEN_TO_INK_HYPOTHESIS` dérivée de `tbl_ga_config_stream_boot` (#0055,
+charge le **menu**, pas confirmée active en salle) — pen0→0x14,
+pen1→0x0A, pen2→0x15, pen3→0x15. Donnait la même encre à pen2 et pen3,
+aplatissant deux niveaux distincts : rendu confirmé par l'utilisateur
+comme "horrible", "moins d'encres qu'avant" — pire que les silhouettes
+grises précédentes, pas juste une question de goût. **Annulé le jour
+même** : `tools/sprite_dump.py` et `web/src/gl/spriteBatch.ts` restaurés
+(`git checkout`, rien n'avait été committé), PNG regénérés en niveaux de
+gris. Reste le point ouvert de `docs/SYMBOLS.md` #2F02, glossaire
+détaillé dans `web/CONTEXT.md` ("Hypothèse de palette pen→encre — TENTÉE
+PUIS ANNULÉE") — **toute future tentative doit vérifier par trace live
+que les 4 pens donnent bien 4 encres distinctes avant de régénérer quoi
+que ce soit**, pas après coup comme cette fois.
+
+Effet de bord noté en cours de route (pas un bug de cette étape,
+resurgit à chaque régénération depuis `extra/dump_ref.bin`) : régénérer
+depuis ce snapshot statique (pas de RAM live disponible) change
+`vflip_state` pour 6 sprites sur 103 par rapport au manifest précédent —
+attendu, ce bit est muté en jeu par le moteur original
+(`data/spriteManifest.ts`), donc sa valeur dépend du moment exact de la
+capture.
+
+Bug de tooling annexe rencontré et corrigé pendant ce chantier (sans
+lien avec la couleur elle-même, généralisé dans `docs/METHODOLOGY.md`
+§22) : des copies de sprites renommées à la main pour l'analyse
+("sprite_hero_up1_...") n'étaient régénérées par rien et sont restées
+figées en niveaux de gris après le premier essai couleur, faisant
+planter le chargement de texture du joueur — supprimées (103 fichiers,
+noms retrouvables dans `asm/symbols.json`), `scene/player.ts` référence
+maintenant le fichier canonique nommé par adresse.
+
+Prochaine étape du cap : IA/état de jeu/HUD/son.

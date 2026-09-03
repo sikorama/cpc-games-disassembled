@@ -95,6 +95,26 @@ par salle. Une entité porte (types 0x02/0x03) ne connaît jamais sa salle
 cible (son champ `room` vaut sa propre salle) : c'est un pur repère visuel
 de jonction, pas une donnée de navigation.
 
+## Hypothèse de palette pen→encre — TENTÉE PUIS ANNULÉE (2026-09-04)
+Le jeu tourne en Gate Array Mode 1 (2 bits/pixel, 4 pens 0-3, confirmé).
+`tools/sprite_dump.py` calcule déjà la valeur de pen par pixel mais la
+correspondance pen→encre CPC réellement utilisée **en salle** n'a jamais
+été confirmée par trace live — point ouvert explicite (`docs/SYMBOLS.md`
+#2F02 : "la couleur exacte ... reste à trancher").
+
+Une palette dérivée de `tbl_ga_config_stream_boot` (#0055, chargée au
+démarrage du **menu**, jamais confirmée active en salle) a été
+implémentée puis **annulée le jour même** : elle donnait la MÊME encre
+aux pens 2 et 3, aplatissant deux niveaux distincts — confirmé
+visuellement (rendu à seulement deux teintes fluo, cyan/vert citron, jugé
+pire que les silhouettes grises précédentes) et confirmé par
+l'utilisateur ("il y a moins d'encres qu'avant"). Retour aux silhouettes
+grises (`git checkout` sur `tools/sprite_dump.py` et
+`web/src/gl/spriteBatch.ts`, régénération des PNG) — rien de ce chantier
+n'a été committé. Le point ouvert reste entier ; toute future tentative
+devra vérifier par trace live que les 4 pens donnent bien 4 encres
+distinctes AVANT de régénérer quoi que ce soit, pas après coup.
+
 ## Table de remap (pièces asymétriques)
 Correspondance `(type de tuile, flip) → (type de tuile, flip)` nécessaire
 pour afficher correctement les pièces asymétriques (murs 0x0A-0x0F,

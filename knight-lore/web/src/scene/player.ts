@@ -20,7 +20,15 @@ import type { KeyboardState } from "../input/keyboard";
 // Sprite fixe unique pour ce MVP -- le perso en deux parties (corps +
 // jambes, cf. web/CONTEXT.md "Personnage en deux entités") est différé,
 // pas nécessaire pour un joueur qui marche/saute.
-const PLAYER_SPRITE_URL = "/sprites/sprite_hero_up1_6A8E_w24_h25.png";
+//
+// Nom de fichier CANONIQUE (adresse ROM, `sprite_<ptr>_w_h.png`) --
+// PAS "sprite_hero_up1_...", une copie renommée à la main, ponctuelle,
+// hors de tools/sprite_dump.py (qui ne nomme JAMAIS ses sorties par un
+// nom "amical" : voir sprite_dump.py::main(), fname = f"sprite_{ptr:04X}_...").
+// Cette copie n'est donc régénérée par rien -- restée figée en niveaux de
+// gris après le passage aux couleurs (2026-09-04), elle a fait planter le
+// chargement de texture. Toujours référencer le fichier canonique.
+const PLAYER_SPRITE_URL = "/sprites/sprite_6A8E_w24_h25.png";
 const PLAYER_SPRITE_WIDTH = 24;
 const PLAYER_SPRITE_HEIGHT = 25;
 

@@ -226,7 +226,7 @@
       ],
       "width": 24,
       "height": 33,
-      "vflip_state": true,
+      "vflip_state": false,
       "hflip_state": false,
       "size_bytes": 201,
       "file": "sprite_4D7D_w24_h33.png"
@@ -237,7 +237,7 @@
       ],
       "width": 24,
       "height": 38,
-      "vflip_state": true,
+      "vflip_state": false,
       "hflip_state": false,
       "size_bytes": 231,
       "file": "sprite_4E46_w24_h38.png"
@@ -383,7 +383,7 @@
       ],
       "width": 32,
       "height": 28,
-      "vflip_state": true,
+      "vflip_state": false,
       "hflip_state": false,
       "size_bytes": 227,
       "file": "sprite_5595_w32_h28.png"
@@ -517,7 +517,7 @@
       ],
       "width": 16,
       "height": 48,
-      "vflip_state": true,
+      "vflip_state": false,
       "hflip_state": false,
       "size_bytes": 195,
       "file": "sprite_5E12_w16_h48.png"
@@ -528,7 +528,7 @@
       ],
       "width": 40,
       "height": 25,
-      "vflip_state": true,
+      "vflip_state": false,
       "hflip_state": false,
       "size_bytes": 253,
       "file": "sprite_5ED5_w40_h25.png"
@@ -550,7 +550,7 @@
       ],
       "width": 24,
       "height": 18,
-      "vflip_state": true,
+      "vflip_state": false,
       "hflip_state": false,
       "size_bytes": 111,
       "file": "sprite_6065_w24_h18.png"
@@ -594,7 +594,7 @@
       ],
       "width": 16,
       "height": 8,
-      "vflip_state": true,
+      "vflip_state": false,
       "hflip_state": false,
       "size_bytes": 35,
       "file": "sprite_6349_w16_h8.png"
@@ -605,7 +605,7 @@
       ],
       "width": 16,
       "height": 16,
-      "vflip_state": true,
+      "vflip_state": false,
       "hflip_state": false,
       "size_bytes": 67,
       "file": "sprite_636C_w16_h16.png"
@@ -616,7 +616,7 @@
       ],
       "width": 16,
       "height": 10,
-      "vflip_state": true,
+      "vflip_state": false,
       "hflip_state": false,
       "size_bytes": 43,
       "file": "sprite_63AF_w16_h10.png"
@@ -627,7 +627,7 @@
       ],
       "width": 16,
       "height": 1,
-      "vflip_state": true,
+      "vflip_state": false,
       "hflip_state": false,
       "size_bytes": 7,
       "file": "sprite_63DA_w16_h1.png"
@@ -638,7 +638,7 @@
       ],
       "width": 16,
       "height": 18,
-      "vflip_state": true,
+      "vflip_state": false,
       "hflip_state": false,
       "size_bytes": 75,
       "file": "sprite_63E1_w16_h18.png"

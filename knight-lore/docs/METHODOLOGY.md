@@ -1384,6 +1384,38 @@ disparaisse) reste une solution pragmatique pour avancer, quitte à
 perdre en vitesse d'exécution, plutôt que de bloquer sur l'identification
 du vrai signal.
 
+## 22. Une copie renommée à la main d'un artefact généré devient orpheline en silence
+
+Un outil de RE qui régénère un artefact (ex. `tools/sprite_dump.py`,
+sortie nommée uniquement par adresse ROM) ne connaît rien des copies
+créées à côté, à la main, pour l'améliorer (ex. renommer
+`sprite_6A8E_...` en `sprite_hero_up1_6A8E_...` pour aider la lecture
+humaine pendant l'analyse). Une régénération ultérieure (ex. après un
+changement de format de rendu) ne touche QUE ses propres noms de
+fichiers — la copie renommée reste figée dans l'ANCIEN format,
+silencieusement, sans erreur ni avertissement, jusqu'à ce qu'un code
+consommateur pointe dessus par erreur et échoue sur un contenu périmé
+(vécu : un portage web référençant la copie "amicale" a chargé un sprite
+resté en niveaux de gris après le passage aux couleurs, provoquant un
+plantage de chargement de texture le temps de comprendre que deux
+fichiers distincts coexistaient pour la même donnée).
+
+**Symptôme reconnaissable** : deux fichiers de tailles différentes pour
+la même adresse/le même contenu logique, l'un à jour, l'autre pas —
+souvent avec des dates de modification très éloignées (l'orphelin porte
+la date de sa création, jamais mise à jour depuis).
+
+**Parade** : si un nom "amical" est utile pour l'analyse humaine, le
+garder comme métadonnée à côté du fichier canonique (nom du symbole dans
+`symbols.json`, une étiquette dans un manifest) plutôt que comme un
+DEUXIÈME FICHIER dupliqué — un seul artefact, généré et référencé par un
+nom stable, pas deux dont un finit par mentir. Si des doublons "amicaux"
+existent déjà, soit les régénérer dans le même passage que l'artefact
+canonique, soit les supprimer une fois que le nom amical est retrouvable
+autrement (ici : `asm/symbols.json` porte déjà chaque nom de sprite par
+adresse, donc les copies PNG dupliquées ont été supprimées sans perte
+d'information).
+
 ## Limites connues de cette méthode
 
 - Le sondage par breakpoint + poll a un coût réel (chaque hit/step est
