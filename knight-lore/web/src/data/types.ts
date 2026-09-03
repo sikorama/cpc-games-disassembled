@@ -43,3 +43,15 @@ export interface RoomEntity {
 export function parseHexByte(hex: string): number {
   return parseInt(hex, 16) & 0xff;
 }
+
+/** Position de spawn d'un garde, appariée corps+jambes (voir
+ * data/roomManifest.ts::loadGuardSpawns et scene/guard.ts) -- deux vraies
+ * entités ROM à la MÊME position de grille, PAS une entité inventée pour
+ * le portage (contrairement au joueur). */
+export interface GuardSpawn {
+  gridX: number;
+  gridY: number;
+  gridZ: number;
+  bodyType: number;
+  legsType: number;
+}

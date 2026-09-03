@@ -7,13 +7,20 @@
 
 import type { Obstacle } from "../physics/obstacles";
 import { playerBox, type PlayerState } from "../scene/player";
+import { guardBox, type GuardState } from "../scene/guard";
 
 // Les coordonnées de grille observées dans les salles restent dans
 // 0..255 (un octet) -- échelle fixe plutôt que recalculée par salle, pour
 // que la vue ne "saute" pas visuellement en changeant de salle.
 const GRID_RANGE = 256;
 
-export function drawTopView(ctx: CanvasRenderingContext2D, size: number, obstacles: Obstacle[], player: PlayerState): void {
+export function drawTopView(
+  ctx: CanvasRenderingContext2D,
+  size: number,
+  obstacles: Obstacle[],
+  player: PlayerState,
+  guards: GuardState[],
+): void {
   const scale = size / GRID_RANGE;
   ctx.clearRect(0, 0, size, size);
   ctx.fillStyle = "#111";
@@ -26,6 +33,12 @@ export function drawTopView(ctx: CanvasRenderingContext2D, size: number, obstacl
     const { minX, maxX, minY, maxY } = obstacle.box;
     ctx.fillStyle = obstacle.kind === "wall" ? "rgba(224,90,90,0.8)" : "rgba(90,150,224,0.8)";
     ctx.fillRect(minX * scale, minY * scale, (maxX - minX) * scale, (maxY - minY) * scale);
+  }
+
+  ctx.fillStyle = "#e08a3a";
+  for (const guard of guards) {
+    const box = guardBox(guard);
+    ctx.fillRect(box.minX * scale, box.minY * scale, (box.maxX - box.minX) * scale, (box.maxY - box.minY) * scale);
   }
 
   const box = playerBox(player);

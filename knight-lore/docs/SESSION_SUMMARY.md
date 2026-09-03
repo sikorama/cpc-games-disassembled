@@ -1168,3 +1168,34 @@ noms retrouvables dans `asm/symbols.json`), `scene/player.ts` référence
 maintenant le fichier canonique nommé par adresse.
 
 Prochaine étape du cap : IA/état de jeu/HUD/son.
+
+### 13. Étape 4 (IA) — premier ennemi : le garde patrouilleur — 2026-09-04
+
+Nouveau module `web/src/scene/guard.ts` : le garde, contrairement au
+joueur, est une VRAIE paire d'entités ROM (corps 0x1E/0x1F/0x9E/0x9F +
+jambes 0x90-0x9D, même position de grille exacte — vérifié sur toutes les
+instances réelles du manifest, ex. salle `0x2e` slots 30/31) — il
+réutilise donc `render/isoOffsets.ts` (calibration réelle) et le cache de
+textures existant, sans rien hardcoder comme pour le joueur.
+
+Mécanique confirmée par désassemblage (`fn_guard_patrol_logic` #1280,
+`fn_resolve_patrol_vector` #12A5-#12FA) : **purement réactif à la
+collision, aucune conscience du joueur** (contrairement à deux autres
+types d'ennemis du même fichier qui eux traquent/fuient) — cycle de 4
+directions, vecteur ±2 sur un seul axe, tourne uniquement quand bloqué.
+`data/roomManifest.ts::loadGuardSpawns()` extrait les paires corps+jambes
+et les retire du décor statique (`isExcludedFromStaticRender`).
+
+**Bug trouvé en testant, corrigé** : le garde marchait tout droit hors
+de l'écran sur les côtés "boîte ouverte" (salles à murs sur seulement 2
+côtés) — aucun obstacle ne l'arrêtait là où le joueur, lui, change de
+salle. Corrigé en réutilisant `ROOM_EDGE_MIN`/`MAX`
+(`scene/roomTransition.ts`) comme mur invisible confinant le garde à sa
+salle (approximation reconnue : ce bord ne coïncide pas pixel-perfect
+avec les boîtes de mur approximatives, acceptable tant que le garde
+reste dans la salle — confirmé par l'utilisateur).
+
+Simplifications assumées (non des faits de RE) : pas de gravité pour le
+garde (gridZ fixe), pas d'animation de marche, pas de flip visuel selon
+la direction, pas de collision avec le joueur (mort au contact = chantier
+"état de jeu" séparé, à venir).
