@@ -62,6 +62,9 @@ export async function loadRoomEntities(roomId: number): Promise<RoomEntity[]> {
       flags: parseHexByte(e.flags),
       isWall: e.is_wall,
       isDecor: e.is_decor,
+      bboxW: e.bbox_w !== undefined ? parseHexByte(e.bbox_w) : undefined,
+      bboxH: e.bbox_h !== undefined ? parseHexByte(e.bbox_h) : undefined,
+      bboxD: e.bbox_d !== undefined ? parseHexByte(e.bbox_d) : undefined,
     }))
     .filter((e) => !isExcludedFromStaticRender(e.type));
 }

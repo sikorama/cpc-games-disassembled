@@ -26,13 +26,25 @@ export function drawTopView(
   ctx.fillStyle = "#111";
   ctx.fillRect(0, 0, size, size);
 
+  // Largeur/hauteur minimales à l'écran : un mur avec une vraie bbox nulle
+  // sur un axe (bande fine orientée selon son sens, voir
+  // physics/obstacles.ts) donnerait un fillRect de largeur/hauteur EXACTEMENT
+  // nulle -- invisible sur un canvas 2D (pas un bug de collision, juste un
+  // bug d'affichage du débogueur qui empêchait de vérifier visuellement que
+  // ces murs sont bien là). Bug trouvé en testant, 2026-09-04.
+  const MIN_VISIBLE_PX = 1.5;
   for (const obstacle of obstacles) {
     // Le sol synthétique couvre toute la salle -- l'afficher masquerait
     // les vrais obstacles, pas utile ici.
     if (obstacle.kind === "floor") continue;
     const { minX, maxX, minY, maxY } = obstacle.box;
     ctx.fillStyle = obstacle.kind === "wall" ? "rgba(224,90,90,0.8)" : "rgba(90,150,224,0.8)";
-    ctx.fillRect(minX * scale, minY * scale, (maxX - minX) * scale, (maxY - minY) * scale);
+    const w = Math.max(MIN_VISIBLE_PX, (maxX - minX) * scale);
+    const h = Math.max(MIN_VISIBLE_PX, (maxY - minY) * scale);
+    // Centré sur la vraie boîte plutôt qu'ancré à son coin, pour qu'un
+    // agrandissement forcé (largeur/hauteur nulle) reste centré sur la
+    // vraie position au lieu de déborder d'un seul côté.
+    ctx.fillRect(minX * scale - (w - (maxX - minX) * scale) / 2, minY * scale - (h - (maxY - minY) * scale) / 2, w, h);
   }
 
   ctx.fillStyle = "#e08a3a";

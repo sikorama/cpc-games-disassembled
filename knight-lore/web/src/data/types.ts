@@ -13,6 +13,14 @@ export interface RawRoomEntity {
   room: string;
   is_decor: boolean;
   is_wall: boolean;
+  /** Dimensions AABB réelles (docs/SYMBOLS.md +0x04-06), extraites de la
+   * table ROM statique tbl_room_connection_detail_* par
+   * tools/room_map/enrich_bbox.py -- absentes pour tout ce qui n'est pas
+   * du décor de jonction (murs/portes), voir physics/obstacles.ts pour
+   * le repli sur une valeur approximative dans ce cas. */
+  bbox_w?: string;
+  bbox_h?: string;
+  bbox_d?: string;
 }
 
 export interface RawRoomManifest {
@@ -38,6 +46,12 @@ export interface RoomEntity {
    * isDecor=false, vérifié sur les données réelles du manifest. */
   isWall: boolean;
   isDecor: boolean;
+  /** Demi-étendues X/Y et hauteur Z RÉELLES (voir RawRoomEntity), absentes
+   * pour le décor hors table de jonction (ex. blocs intérieurs placés
+   * salle par salle) -- toujours les trois ensemble ou aucune. */
+  bboxW?: number;
+  bboxH?: number;
+  bboxD?: number;
 }
 
 export function parseHexByte(hex: string): number {
