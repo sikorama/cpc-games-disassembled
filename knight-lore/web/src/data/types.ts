@@ -31,6 +31,13 @@ export interface RoomEntity {
   gridY: number;
   gridZ: number;
   flags: number;
+  /** Pass-through direct de RawRoomEntity.is_wall/is_decor -- voir
+   * physics/obstacles.ts. Attention : `isDecor` marque le décor
+   * D'ENVIRONNEMENT SOLIDE (murs, blocs empilés), PAS l'inverse -- les
+   * éléments interactifs non-solides (montants de porte, pickups) ont
+   * isDecor=false, vérifié sur les données réelles du manifest. */
+  isWall: boolean;
+  isDecor: boolean;
 }
 
 export function parseHexByte(hex: string): number {

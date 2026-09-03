@@ -30,6 +30,13 @@ export interface RoomView {
 export class LoadedRoom {
   constructor(private readonly entities: ResolvedEntity[]) {}
 
+  /** Entités brutes (coordonnées de grille non tournées), pour construire
+   * les obstacles physiques (physics/obstacles.ts) sans re-fetcher le
+   * manifest -- voir main.ts. */
+  getEntities(): RoomEntity[] {
+    return this.entities.map((e) => e.entity);
+  }
+
   /**
    * Construit les draw calls pour un angle de vue donné. Toute la logique
    * des 4 angles tient ici : on tourne les COORDONNÉES DE GRILLE avant
