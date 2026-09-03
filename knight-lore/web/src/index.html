@@ -34,16 +34,33 @@
         color: #ddd;
         border: 1px solid #555;
       }
+      #top-view {
+        position: fixed;
+        bottom: 8px;
+        right: 8px;
+        /* Sans ceci, la règle générique `canvas { width/height:100% }`
+           ci-dessus s'applique aussi à ce canvas -- en position fixe, ça le
+           fait couvrir tout l'écran et masquer le rendu iso derrière. */
+        width: 220px;
+        height: 220px;
+        border: 1px solid #555;
+        border-radius: 4px;
+        image-rendering: pixelated;
+      }
     </style>
   </head>
   <body>
     <canvas id="gl-canvas"></canvas>
+    <canvas id="top-view" width="220" height="220" title="Vue de dessus (débogage collision) : rouge=mur, bleu=décor solide, jaune=boîte du joueur"></canvas>
     <div id="hud">
-      Salle <select id="room-select"></select> — glisser/flèches: déplacer (Maj: pas fin),
-      molette: zoom, "R"/Maj+"R": tourner d'un quart de tour, "W": murs, "C": vue d'origine<br />
+      Salle <select id="room-select"></select> — glisser: déplacer la caméra,
+      molette: zoom, "R"/Maj+"R": tourner d'un quart de tour, "T": murs, "C": vue d'origine<br />
+      WASD/flèches: déplacer le joueur, Espace: sauter<br />
       vue=<span id="hud-view">-</span>/3 murs=<span id="hud-walls">-</span>
       zoom=<span id="hud-zoom">-</span> panX=<span id="hud-panx">-</span>
-      panY=<span id="hud-pany">-</span>
+      panY=<span id="hud-pany">-</span><br />
+      joueur pos=<span id="hud-player-pos">-</span> vel=<span id="hud-player-vel">-</span>
+      <span id="hud-player-air">-</span>
     </div>
     <script type="module" src="./main.ts"></script>
   </body>

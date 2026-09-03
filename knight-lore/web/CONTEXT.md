@@ -75,6 +75,26 @@ indépendantes empilées à l'exécution — un "corps" (types 0x1E/0x1F,
 sprite et son propre offset de calibration ROM. Ce n'est pas un artefact
 du portage web : c'est le mécanisme du moteur d'origine.
 
+## Grille monde 16×16
+Le numéro de salle encode directement sa position dans une grille monde
+16×16 : nibble bas = colonne, nibble haut = ligne (confirmé par
+désassemblage, `fn_player_door_transition`, et indépendamment par
+`tools/room_map/stitch.py`). La salle voisine dans une direction donnée
+est une pure arithmétique sur ce numéro (±1 sur le nibble bas pour
+Est/Ouest, ±0x10 pour Nord/Sud) — PAS une table de correspondance :
+`tbl_room_connections` (0x0147), un temps soupçonnée de jouer ce rôle,
+s'est avérée n'être que du décor de jonction (entités porte/mur affichées
+à la frontière), jamais lue pour résoudre la salle cible.
+
+## Franchissement de bord de salle
+Le passage d'une salle à l'autre en marchant (voir [[Grille monde 16×16]])
+se détecte par la position du joueur contre deux constantes universelles
+de bord (`0x3B`/`0xC4`), vérifiées identiques sur un échantillon aléatoire
+de salles — indépendantes de l'étendue réelle des murs, qui elle varie
+par salle. Une entité porte (types 0x02/0x03) ne connaît jamais sa salle
+cible (son champ `room` vaut sa propre salle) : c'est un pur repère visuel
+de jonction, pas une donnée de navigation.
+
 ## Table de remap (pièces asymétriques)
 Correspondance `(type de tuile, flip) → (type de tuile, flip)` nécessaire
 pour afficher correctement les pièces asymétriques (murs 0x0A-0x0F,

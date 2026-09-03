@@ -1067,3 +1067,61 @@ l'instant : rien d'assez irréversible/tranché.
 3. Couleurs réelles des sprites (mapping pen→encre CPC, cf.
    `docs/RENDERING_PIPELINE.md` §9).
 4. IA/état de jeu/HUD/son.
+
+### 12bis. Étape 1 (joueur + gravité + collision) — MVP implémenté — 2026-09-03
+
+Nouveaux modules `web/src/input/keyboard.ts` (état clavier maintenu),
+`web/src/physics/{aabb,obstacles}.ts` (solveur AABB en coordonnées de
+grille non tournées, obstacles approximatifs faute de vraies bbox_w/h/d
+dans le manifest), `web/src/scene/player.ts` (état joueur, gravité
+continue, saut, résolution Z→X→Y). Joueur natif du portage (sprite
+`sprite_hero_up1`), PAS les lignes manifest slots 0/1 (0x12/0x22) dont le
+`grid_z_or_offset` reste un mystère de RE non résolu.
+
+**Vue de dessus de débogage** (`web/src/debug/topView.ts`, encart bas-droit
+de l'UI) : plan X/Y brut, indépendant de la projection isométrique --
+rendu nécessaire car le décalage entre sprite projeté et vraie boîte de
+collision est **impossible à juger à l'œil en vue iso seule**. A permis de
+distinguer deux bugs réels de deux bugs apparents :
+- **Bug réel trouvé et corrigé** : le sprite joueur apparaissait décalé
+  d'une demi-largeur de sa vraie position (ancre bas-gauche du shader,
+  sans le rattrapage `proj_offset_x = -largeur/2` que tous les autres
+  types reçoivent via `isoOffsets.ts` -- règle géométrique générale de
+  l'ancrage, pas une calibration ROM, donc applicable sans y passer). Fixé
+  par `PLAYER_PROJ_OFFSET` dans `scene/player.ts`.
+- **Non-bug identifié grâce à la vue de dessus** : la collision elle-même
+  était déjà correcte (boîtes flush l'une contre l'autre) quand le rendu
+  iso donnait l'impression contraire -- sans cet outil, risque réel de
+  "corriger" une collision qui n'était pas cassée.
+
+**Limite connue, différée** : tri de profondeur (`sortKey` peintre,
+`scene/room.ts`/`scene/player.ts`, clé scalaire `-gridX+gridY-gridZ`) —
+un bloc empilé peut s'afficher devant le joueur alors qu'il ne devrait
+pas, dans certaines positions relatives. Limite du tri par clé scalaire
+unique face à un sprite "haut" (empilement) dont la silhouette écran
+déborde sur la case voisine -- pas spécifique au joueur (même formule que
+toutes les entités), potentiellement déjà présent entité-contre-entité.
+Décision : noter et différer, chantier rendu à part, ne bloque pas la
+suite de la boucle de jeu.
+
+### 12ter. Étape 2 (transitions de salle) — implémenté et validé — 2026-09-03
+
+Nouveau module `web/src/scene/roomTransition.ts` : la salle voisine est
+une pure arithmétique sur l'ID de salle (grille monde 16×16, nibble
+bas=colonne/nibble haut=ligne, confirmé par désassemblage
+`fn_player_door_transition` + indépendamment par `tools/room_map/stitch.py`)
+— **pas** de table de correspondance (`tbl_room_connections`/0x0147
+vérifiée n'être que du décor de jonction). Détection de franchissement via
+deux constantes universelles de bord de salle (`0x3B`/`0xC4`), vérifiées
+identiques sur un échantillon aléatoire de salles malgré une étendue de
+murs variable par salle. Terminologie versée dans `web/CONTEXT.md`
+("Grille monde 16×16", "Franchissement de bord de salle").
+
+**Validé par l'utilisateur** après un tour complet de la carte : aucun
+franchissement en coin observé (X et Y dépassés simultanément) — cohérent
+avec le jeu original où ce cas n'existe pas non plus. Le code gère quand
+même ce cas (priorité déterministe à l'axe X) par prudence, sans que ça
+ait été nécessaire en pratique.
+
+Prochaine étape du cap : couleurs réelles des sprites (mapping pen→encre
+CPC).

@@ -48,6 +48,8 @@ export async function loadRoomEntities(roomId: number): Promise<RoomEntity[]> {
       gridY: parseHexByte(e.grid[1]),
       gridZ: parseHexByte(e.grid[2]),
       flags: parseHexByte(e.flags),
+      isWall: e.is_wall,
+      isDecor: e.is_decor,
     }))
     .filter((e) => !isExcludedFromStaticRender(e.type));
 }
