@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Knight Lore — rendu isométrique (WebGL2)</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #111;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        image-rendering: pixelated;
+        cursor: grab;
+      }
+      #hud {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        color: #ddd;
+        font: 12px monospace;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 4px 8px;
+        border-radius: 4px;
+      }
+      #room-select {
+        font: 12px monospace;
+        background: #222;
+        color: #ddd;
+        border: 1px solid #555;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="gl-canvas"></canvas>
+    <div id="hud">
+      Salle <select id="room-select"></select> — glisser/flèches: déplacer (Maj: pas fin),
+      molette: zoom, "R"/Maj+"R": tourner d'un quart de tour, "W": murs, "C": vue d'origine<br />
+      vue=<span id="hud-view">-</span>/3 murs=<span id="hud-walls">-</span>
+      zoom=<span id="hud-zoom">-</span> panX=<span id="hud-panx">-</span>
+      panY=<span id="hud-pany">-</span>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
