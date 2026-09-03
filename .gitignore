@@ -1,0 +1,26 @@
+# Python venv / caches
+__pycache__/
+*.pyc
+.venv/
+
+# OS / editor cruft
+.DS_Store
+*.swp
+
+# Éventuels dumps binaires volumineux générés en cours de session
+*.bin
+*.sna
+*.dsk
+/tmp_dumps/
+
+# Portage JS (web/) : dépendances et sorties générées, jamais commitées
+node_modules/
+dist/
+# web/public/ est généré par web/scripts/sync-assets.mjs depuis tools/ --
+# jamais édité à la main, jamais committé (même philosophie que
+# asm/code/*.asm vs asm/symbols.json, mais ici la source de vérité est
+# tools/, pas web/public/)
+/knight-lore/web/public/
+
+# Sorties de tools/render_ref.py -- images de contrôle regénérables, jamais commitées
+/knight-lore/tools/render_ref_out/
