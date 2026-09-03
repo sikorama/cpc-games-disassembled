@@ -1199,3 +1199,43 @@ Simplifications assumées (non des faits de RE) : pas de gravité pour le
 garde (gridZ fixe), pas d'animation de marche, pas de flip visuel selon
 la direction, pas de collision avec le joueur (mort au contact = chantier
 "état de jeu" séparé, à venir).
+
+### 14. Vraies bounding-box murs/portes (fin des footprints devinés) — 2026-09-04
+
+Suite à l'observation que le garde rebondissait à des endroits ne
+correspondant pas aux murs rendus : découverte que `bbox_w`/`bbox_h`/
+`bbox_d` (dimensions AABB réelles par entité, `docs/SYMBOLS.md` +0x04-06)
+sont extractibles **sans émulateur live**, depuis la table ROM statique
+`tbl_room_connection_detail_*` (#3E9E-#417E, déjà intégralement
+désassemblée) — présente octet pour octet dans `extra/dump_ref.bin`.
+Nouveau script `tools/room_map/enrich_bbox.py` : parse cette table (89
+entrées), enrichit `rooms_manifest.json` par correspondance exacte
+`(type, grid_x, grid_y, grid_z, flags)`. Résultat : murs/portes obtiennent
+leur vraie géométrie (souvent des bandes FINES orientées, demi-étendue
+nulle sur un axe — pas des carrés uniformes comme avant) ; les blocs
+intérieurs (type 0x07, hors table de jonction) gardent le repli deviné,
+confirmé entre-temps identique à la vraie valeur (8,8,12).
+`physics/obstacles.ts::buildObstacles()` utilise la vraie bbox quand les
+trois champs sont présents, sinon retombe sur les anciennes constantes.
+
+**Deux bugs trouvés en testant ce changement, corrigés** :
+1. Le sol synthétique était dérivé de la boîte englobante des entités de
+   la salle, pas de la vraie salle — pour une salle "étroite" (ex. 0x2e,
+   entités seulement Y=99-160 alors que la vraie salle va de 59 à 196),
+   le sol s'arrêtait avant le vrai bord → chute en s'approchant d'un côté
+   sans mur. Corrigé : étendue fixée aux constantes universelles
+   `ROOM_EDGE_MIN`/`MAX` (`scene/roomTransition.ts`), pas une
+   approximation par salle.
+2. Un mur avec une vraie bbox nulle sur un axe donnait un rectangle de
+   largeur/hauteur EXACTEMENT nulle dans la vue de dessus de débogage —
+   invisible sur un canvas 2D (bug d'affichage, pas de collision).
+   Corrigé : épaisseur minimale visible forcée à l'écran
+   (`debug/topView.ts`).
+
+**Non-bug validé en testant** : la possibilité de traverser un mur rouge
+à un endroit précis correspond exactement à un montant de porte
+(`isDecor=false`, volontairement exclu des obstacles) — vérifié par
+l'utilisateur que la ligne reste continue et bloque partout où il n'y a
+PAS de porte. Comportement voulu, pas un trou de données. Reste à traiter
+plus tard : la hauteur de la porte pour l'entrée/sortie (ex. sauter
+par-dessus une porte basse) — hors sujet ici.

@@ -115,6 +115,19 @@ n'a été committé. Le point ouvert reste entier ; toute future tentative
 devra vérifier par trace live que les 4 pens donnent bien 4 encres
 distinctes AVANT de régénérer quoi que ce soit, pas après coup.
 
+## Bbox réelle (murs/portes)
+Dimensions AABB réelles par entité (`bbox_w`/`bbox_h`/`bbox_d`,
+`docs/SYMBOLS.md` +0x04-06), extraites de la table ROM statique
+`tbl_room_connection_detail_*` (`tools/room_map/enrich_bbox.py`, sans
+émulateur live) et jointes dans `rooms_manifest.json`. Couvre le décor de
+jonction (murs, portes) — PAS le décor placé salle par salle (ex. blocs
+intérieurs), qui garde un footprint deviné (confirmé correct pour les
+blocs : (8,8,12), identique à la valeur approximative précédente). Une
+bbox nulle sur un axe (mur = bande fine orientée selon son sens) est une
+vraie donnée, pas un bug — a nécessité un correctif d'affichage dans
+`debug/topView.ts` (un rectangle de largeur nulle est invisible sur un
+canvas 2D).
+
 ## Table de remap (pièces asymétriques)
 Correspondance `(type de tuile, flip) → (type de tuile, flip)` nécessaire
 pour afficher correctement les pièces asymétriques (murs 0x0A-0x0F,
