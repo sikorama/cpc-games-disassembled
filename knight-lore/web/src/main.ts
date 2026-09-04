@@ -1,5 +1,5 @@
 import { createGLContext, resizeToDisplaySize } from "./gl/context";
-import { SpriteRenderer, type SpriteDrawCall } from "./gl/spriteBatch";
+import { SpriteRenderer } from "./gl/spriteBatch";
 import { Camera } from "./render/camera";
 import { rotateGrid, type ViewAngle } from "./render/isoMath";
 import { listRoomIds, loadGuardSpawns } from "./data/roomManifest";
@@ -7,7 +7,7 @@ import { loadSpriteIndex } from "./data/spriteManifest";
 import { loadRoom, type LoadedRoom, type RoomView } from "./scene/room";
 import { createKeyboardState, type KeyboardState } from "./input/keyboard";
 import { buildObstacles, type Obstacle } from "./physics/obstacles";
-import { createPlayerState, loadPlayerTexture, updatePlayer, PLAYER_PROJ_OFFSET, type PlayerState } from "./scene/player";
+import { createPlayerState, loadPlayerFrames, updatePlayer, playerDrawCalls, type PlayerState } from "./scene/player";
 import { createGuardState, updateGuard, guardDrawCalls, type GuardState } from "./scene/guard";
 import { drawTopView } from "./debug/topView";
 import {
@@ -82,7 +82,8 @@ async function main() {
   // quand on change de salle ou d'angle.
   const room = await loadRoom(gl, DEFAULT_ROOM_ID);
   const built = room.build(0, false);
-  const playerTexture = await loadPlayerTexture(gl);
+  const playerSpriteIndex = await loadSpriteIndex();
+  const playerFrames = await loadPlayerFrames(gl, playerSpriteIndex);
   const guards = await loadGuards(DEFAULT_ROOM_ID);
   const state: AppState = {
     room,
@@ -91,7 +92,7 @@ async function main() {
     hideWalls: false,
     built,
     camera: new Camera(built.bounds),
-    player: createPlayerState(playerTexture.texture, playerTexture.width, playerTexture.height, PLAYER_SPAWN),
+    player: createPlayerState(playerFrames, PLAYER_SPAWN),
     guards,
     obstacles: buildObstacles(room.getEntities()),
     input: createKeyboardState(window),
@@ -131,6 +132,11 @@ async function main() {
     state.player.velY = 0;
     state.player.velZ = 0;
     state.player.airborne = true;
+    // Phase de marche remise à zéro en changeant de salle : le joueur y est
+    // replacé à l'arrêt, et le gel de phase (walkAnimation.ts) le laisserait
+    // sinon figé au milieu d'une foulée d'une salle à l'autre.
+    state.player.anim.phase = 0;
+    state.player.anim.timer = 0;
     rebuild();
   }
 
@@ -205,7 +211,7 @@ async function main() {
     const aspect = canvas.width / canvas.height;
     const drawCalls = [
       ...state.built.drawCalls,
-      playerDrawCall(state),
+      ...playerDrawCalls(state.player, state.view),
       ...state.guards.flatMap((guard) => guardDrawCalls(guard, state.view)),
     ];
     renderer.draw(state.camera.getView(), state.camera.getProjection(aspect), drawCalls);
@@ -214,32 +220,6 @@ async function main() {
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
-}
-
-/** Draw call du joueur, recalculé chaque frame (position mobile) --
- * séparé de LoadedRoom.build() (statique, reconstruite seulement au
- * changement de salle/angle/murs) pour ne pas payer le recalcul complet
- * de la géométrie de salle à chaque frame. `projOffset: [0,0]` : le
- * joueur n'est pas une entité ROM, render/isoOffsets.ts (calibration par
- * type réel) ne s'applique pas ici -- PLAYER_PROJ_OFFSET (scene/player.ts)
- * ne fait que centrer le sprite sur sa case, une règle géométrique
- * générale de l'ancrage, pas une calibration ROM. */
-function playerDrawCall(state: AppState): SpriteDrawCall {
-  const player = state.player;
-  const [rx, ry] = rotateGrid(player.gridX, player.gridY, state.view);
-  return {
-    texture: player.texture,
-    worldPos: [rx, player.gridZ, ry],
-    size: [player.width, player.height],
-    projOffset: PLAYER_PROJ_OFFSET,
-    flipX: false,
-    // Même formule que scene/room.ts -- limite connue : un empilement de
-    // blocs peut s'afficher devant le joueur dans certaines positions
-    // (clé scalaire unique insuffisante quand la silhouette écran d'un
-    // sprite "haut" déborde sur la case voisine). Différé, voir
-    // docs/SESSION_SUMMARY.md §12bis.
-    sortKey: -rx + ry - player.gridZ,
-  };
 }
 
 function updateHud(state: AppState): void {

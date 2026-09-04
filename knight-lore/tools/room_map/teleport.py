@@ -190,6 +190,17 @@ for _t in range(0x61, 0x65):
 
 # Types worth stripping out when producing a "readable" map (pure static
 # decor with no gameplay identity of its own) — per user request 2026-08-07.
+# SCOPE (2026-09-04): CARTOGRAPHY ONLY (--hide-decor). This set was once
+# reused as-is by the web port as its physics solidity source, which caused
+# the "some visually identical cubes pass through, others don't" bug: several
+# ROM types share sprite 59DB ("small block") but have their own gameplay
+# identity (moving_block_A/B 0x36/0x37, pushable_block 0x3E, sinking_cube
+# 0x5B, dormant_block 0x8F), so they don't belong in a cartography set even
+# though they ARE solid geometry. Physics solidity is now decided by the
+# consumer instead: see web/src/physics/solidTypes.ts.
+# General rule for this tool: export OBSERVED FACTS (type, position, bbox,
+# flags), never gameplay policy — a policy shipped from here becomes
+# invisible and gets reused as truth by a consumer nobody planned for.
 DECOR_TYPES = {0x80} | set(range(0x0A, 0x10)) | {0x06, 0x07}
 
 # Subset of DECOR_TYPES that are actual room-boundary walls, for --hide-decor.
@@ -197,6 +208,7 @@ DECOR_TYPES = {0x80} | set(range(0x0A, 0x10)) | {0x06, 0x07}
 # 2026-08-07 — --hide-decor was removing those too, but they're worth
 # keeping visible in a stitched map (unlike literal boundary wall segments).
 WALL_TYPES = {0x80} | set(range(0x0A, 0x10))
+
 
 
 class Client:

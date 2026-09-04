@@ -53,6 +53,9 @@ raffinement de fidélité, pas une nécessité du jeu d'origine. Ça reste
 une couche purement physique, indépendante du rendu : ne justifie PAS
 de passer au [[Remake 3D]] visuel.
 
+C'est un **écart assumé** vis-à-vis de l'original, pas de la fidélité —
+l'original n'a rien de tel. Inscrit comme tel dans `web/DEVIATIONS.md`.
+
 ## Remake 3D
 Option future distincte du [[Portage iso-2D à 4 vues]] : recréer des
 assets 3D complets (modèles, textures) pour le jeu, potentiellement avec
@@ -69,11 +72,68 @@ identifiée (hypothèse non vérifiée : sprites *authored* pré-pivotés en
 1984 pour une raison de pipeline de production perdue).
 
 ## Personnage en deux entités
-Les personnages (joueur, garou, etc.) sont rendus comme deux entités
-indépendantes empilées à l'exécution — un "corps" (types 0x1E/0x1F,
-0x9E/0x9F) et des "jambes" (types 0x90-0x9D) — chacune avec son propre
-sprite et son propre offset de calibration ROM. Ce n'est pas un artefact
-du portage web : c'est le mécanisme du moteur d'origine.
+Les personnages (joueur, garou, garde, etc.) sont rendus comme deux
+entités indépendantes empilées à l'exécution — un "corps" et des
+"jambes" — chacune avec son propre sprite et son propre offset de
+calibration ROM. Ce n'est pas un artefact du portage web : c'est le
+mécanisme du moteur d'origine.
+
+**Garde/Melkhior** : plages confirmées — corps 0x1E/0x1F/0x9E/0x9F,
+jambes 0x90-0x9D.
+
+**Loup-garou (nuit)** : plages confirmées — corps 0x40-0x4F
+(`sprite_werewulf_up...`), jambes 0x30-0x3D (`sprite_werewulf_feet...`).
+
+**Joueur (jour)** : plages CONFIRMÉES (2026-09-04, `tbl_sprite_dispatch`
+#429E) — jambes 0x10-0x15 (`feet1-4`) et 0x18-0x1D (`feet5-8`), corps
+0x20-0x25 et 0x28-0x2D (`hero_up...`). L'ancienne hypothèse « 0x10-0x1D =
+jambes, non vérifiée » est tranchée, et l'attribution empirique du portage
+est remplacée.
+
+**Hiérarchie jambes → corps** : ce n'est pas une paire symétrique. L'entité
+JAMBES porte la position, la phase d'animation et l'orientation ; le CORPS
+en est entièrement dérivé, recalculé chaque frame (`corps.type =
+jambes.type + 0x10`, position recopiée, élévation `+0x0C` en Z). Le corps ne
+possède aucun état propre. Conséquence pour le portage : un seul état
+d'animation, dont les deux sprites sont dérivés — deux sélections
+indépendantes rendent la désynchronisation possible, et c'est exactement ce
+qui a produit le bug d'orientation des pieds.
+
+**Pas de pose de repos** : il n'existe aucun sprite « debout immobile ». Le
+cycle n'avance que si le personnage se déplace, donc à l'arrêt il **gèle sur
+la phase courante**. Les images hors cycle (une par jeu de sprites) ne sont
+pas des poses de repos : ce sont des poses alternatives rares tirées au
+hasard et tenues quelques frames.
+
+**Garde, corps** : loge son bit de jeu de sprites dans `type` bit0 et non
+bit3 — d'où les paires 0x1E/0x1F (chevalier) et 0x9E/0x9F (Melkhior), qui
+sont **deux orientations d'un même personnage**, pas deux personnages.
+
+## Code d'orientation
+Grandeur du moteur d'origine valant 0-3 (`0=-X, 1=+X, 2=+Y, 3=-Y`),
+composée de deux bits qui ne jouent PAS le même rôle : l'un sélectionne un
+**jeu de sprites entièrement différent** (deux dessins distincts, pas un
+miroir), l'autre déclenche un **miroir horizontal au rendu**, appliqué
+par-dessus le sprite déjà choisi. Utiliser le premier comme un flip donne un
+résultat correct dans exactement une direction sur quatre.
+
+Le joueur et le garde ne l'obtiennent pas de la même façon, et c'est
+structurel : le joueur le **porte comme un état persistant** basculé par
+l'input (il peut donc regarder quelque part sans bouger — le mode de
+contrôle « rotation » en dépend) ; le garde n'en stocke aucun et le
+**recalcule chaque frame depuis son vecteur de déplacement**. Ne pas unifier
+les deux.
+
+À ne pas confondre avec la **direction de patrouille** du garde, un entier
+0-3 séparé qui suit un cycle géométrique (`-X, +Y, +X, -Y`) et non la
+numérotation ci-dessus.
+
+## Miroir effectif
+Le retournement horizontal réellement appliqué à un sprite n'est jamais un
+seul bit : c'est le XOR du bit de miroir **capturé dans les données du
+sprite** (le jeu mute ce bit en place — ce n'est pas un état neutre), du bit
+d'orientation de l'entité, et du retournement propre à la vue affichée.
+N'en utiliser qu'un seul donne un résultat correct par accident.
 
 ## Grille monde 16×16
 Le numéro de salle encode directement sa position dans une grille monde
@@ -127,6 +187,30 @@ bbox nulle sur un axe (mur = bande fine orientée selon son sens) est une
 vraie donnée, pas un bug — a nécessité un correctif d'affichage dans
 `debug/topView.ts` (un rectangle de largeur nulle est invisible sur un
 canvas 2D).
+
+## Famille de sprite (plusieurs types ROM, un seul sprite)
+Un même graphisme ROM (ex. `sprite_small_block_59DB`, "petit bloc") peut
+être réutilisé par plusieurs **types d'entité** distincts ayant des
+comportements de jeu différents — ex. bloc statique (0x07), bloc mobile
+(0x36/0x37), bloc poussable (0x3E), cube qui s'enfonce (0x5B), bloc
+dormant (0x8F). Visuellement identiques, ce sont des objets ROM
+différents : classer leur solidité par sprite serait une erreur, il faut
+classer par type.
+
+**Classification cartographique vs solidité physique** (résolu
+2026-09-04) : « décor » est un concept **cartographique** — quoi masquer
+pour produire une carte lisible — et n'est PAS une source de vérité
+physique. Il l'a pourtant été un temps, provoquant exactement le bug
+ci-dessus. La solidité physique est désormais une **politique du portage**,
+décidée du côté qui la consomme et non exportée par l'outil d'extraction ;
+elle est délibérément plus large, incluant les types à comportement
+dynamique pas encore implémenté, traités comme un bloc statique en
+attendant. Ne jamais refondre les deux.
+
+Règle générale qui en découle : un outil d'extraction exporte des **faits
+observés** (type, position, bbox), jamais une politique de gameplay — une
+politique expédiée depuis là devient invisible et se fait réutiliser comme
+vérité par un consommateur que personne n'avait prévu.
 
 ## Table de remap (pièces asymétriques)
 Correspondance `(type de tuile, flip) → (type de tuile, flip)` nécessaire
