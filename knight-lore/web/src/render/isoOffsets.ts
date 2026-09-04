@@ -86,6 +86,38 @@ const GUARD_OR_WIZARD_BODY_OFFSET = offset(244, 3);
 // (asm/code/entity_logic_mechanical.asm:15). Confirmée en direct (salle 0x2E).
 const GUARD_LEGS_OFFSET = offset(244, 250);
 
+// Moitié BASSE du joueur (jambes, 0x10-0x1D) -- entrée ROM #1D89, la MÊME
+// que celle du garde (`call #1D89` en tête de fn_player_logic,
+// asm/code/doors_and_player_logic.asm:184). Attendu, puisque les deux
+// plages pointent aussi vers les mêmes sprites (feet1-8), mais confirmé
+// par le désassemblage, pas supposé.
+const PLAYER_LEGS_OFFSET = offset(244, 250);
+
+// Moitié HAUTE du joueur (corps, 0x20-0x2F) -- entrée ROM #1DA3, via le
+// `call #1DA3` en tête de fn_entity_materialize_dispatch_a
+// (asm/code/doors_and_player_logic.asm:1312). Noter que le corps du joueur
+// et celui du garde n'ont PAS la même calibration (#1DA3 contre #1DBC) :
+// ce sont deux personnages différents, seules les jambes sont partagées.
+const PLAYER_BODY_OFFSET = offset(244, 248);
+
+// Joueur de NUIT (loup-garou) -- NON AJOUTÉ ICI, et pas par oubli.
+//
+// La lecture de la table de dispatch de logique donne jambes 0x30-0x3D via
+// #20D0 fn_player_logic_night (-> #1DA8) et corps 0x40-0x4F via #268E
+// fn_entity_materialize_dispatch_b (-> #1DAD). Mais 0x36/0x37 sont déjà
+// documentés ailleurs comme des BLOCS MOBILES partageant le sprite du
+// petit bloc 0x59DB (docs/SYMBOLS.md:320, tools/room_map/teleport.py), et
+// mappés sur BLOCK_OFFSET ci-dessus. Un octet de type ne peut pas être les
+// deux : une des deux lectures est fausse, et ce n'est pas tranché.
+// À régler avec le chantier jour/nuit (voir web/DEVIATIONS.md).
+
+// Variante ALT des jambes de garde (0x96/0x97 seulement) -- ces deux types
+// dispatchent vers #1027 fn_guard_legs_logic_alt, qui appelle #1DB7 et NON
+// #1D89 (asm/code/entity_logic_mechanical.asm:73). 13 px d'écart vertical
+// avec les autres jambes : ils étaient repliés à tort sur GUARD_LEGS_OFFSET
+// ici avant 2026-09-04.
+const GUARD_LEGS_ALT_OFFSET = offset(244, 7);
+
 const FLAG_ORIENTATION_BIT = 0x40;
 
 /**
@@ -132,8 +164,6 @@ export function getProjOffset(type: number, flags: number): [number, number] | n
     case 0x93:
     case 0x94:
     case 0x95:
-    case 0x96:
-    case 0x97:
     case 0x98:
     case 0x99:
     case 0x9a:
@@ -141,6 +171,39 @@ export function getProjOffset(type: number, flags: number): [number, number] | n
     case 0x9c:
     case 0x9d:
       return GUARD_LEGS_OFFSET;
+    case 0x96:
+    case 0x97:
+      return GUARD_LEGS_ALT_OFFSET;
+    case 0x10:
+    case 0x11:
+    case 0x12:
+    case 0x13:
+    case 0x14:
+    case 0x15:
+    case 0x18:
+    case 0x19:
+    case 0x1a:
+    case 0x1b:
+    case 0x1c:
+    case 0x1d:
+      return PLAYER_LEGS_OFFSET;
+    case 0x20:
+    case 0x21:
+    case 0x22:
+    case 0x23:
+    case 0x24:
+    case 0x25:
+    case 0x26:
+    case 0x27:
+    case 0x28:
+    case 0x29:
+    case 0x2a:
+    case 0x2b:
+    case 0x2c:
+    case 0x2d:
+    case 0x2e:
+    case 0x2f:
+      return PLAYER_BODY_OFFSET;
     default:
       return null;
   }

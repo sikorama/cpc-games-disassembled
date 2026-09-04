@@ -13,6 +13,7 @@
 // bloquent à toute hauteur -- voir buildSideWalls().
 
 import type { RoomEntity } from "../data/types";
+import { isSolidType } from "./solidTypes";
 import type { Box3 } from "./aabb";
 import { ROOM_EDGE_MIN, ROOM_EDGE_MAX, DOOR_TYPES, DOOR_GAP_HALF_WIDTH } from "../scene/roomTransition";
 
@@ -50,10 +51,11 @@ const WALL_MAX_Z = 0xff;
 // un mur : elle avait été capturée LEVÉE (ouverte) dans cette salle, d'où
 // le passage possible en dessous -- fidèle à cet instant précis du jeu
 // réel, pas un bug. Pas de simulation du cycle monter/descendre pour
-// l'instant (chantier à part) : `is_wall`/`is_decor` valent `false` pour
+// l'instant (chantier à part) : `is_wall` vaut `false` et isSolidType()
+// rend `false` pour
 // ce type, donc non-solide, comme avant.
 
-// Repli si bbox_w/h/d absentes (décor solide, is_decor=true hors murs) :
+// Repli si bbox_w/h/d absentes (décor solide, isSolidType() hors murs) :
 // blocs empilables, statues, etc. Le pas de hauteur 12 correspond à
 // l'empilement observé des blocs (ex. gridZ 0x80 -> 0x8C -> 0x98) --
 // confirmé identique à la vraie bbox du type 0x07 (8,8,12).
@@ -247,28 +249,37 @@ function buildSideWalls(entities: RoomEntity[], doors: RoomEntity[]): Obstacle[]
 }
 
 /**
- * IMPORTANT (vérifié sur les données réelles, contraire à l'intuition du
- * nom) : `isDecor` marque le décor D'ENVIRONNEMENT SOLIDE (murs, blocs
- * empilés) -- PAS l'inverse. Les éléments interactifs non-solides
- * (montants de porte 0x02/0x03, pickups) ont `isDecor=false` dans le
- * manifest. Conséquence pratique : les montants de porte sont exclus des
- * obstacles automatiquement, sans exception à coder -- traversables pour
- * l'instant, en attendant les transitions de salle.
+ * La solidité vient de `isSolidType()` (physics/solidTypes.ts), une
+ * politique du PORTAGE indexée par type ROM -- PAS d'un champ du manifest.
+ * L'outil d'extraction n'exporte que des faits observés (type, position,
+ * bbox) ; c'est ici qu'on décide ce qui bloque.
+ *
+ * Les éléments interactifs non-solides (montants de porte 0x02/0x03,
+ * pickups) ne sont donc jamais des obstacles, sans exception à coder --
+ * traversables pour l'instant.
+ *
+ * BUG TROUVÉ EN TESTANT (2026-09-04) : plusieurs types ROM différents
+ * (bloc mobile 0x36/0x37, poussable 0x3E, cube qui s'enfonce 0x5B, bloc
+ * dormant 0x8F) partagent le MÊME sprite qu'un bloc statique solide (0x07,
+ * sprite_small_block_59DB) mais manquaient à la classification physique --
+ * des cubes visuellement identiques étaient tantôt solides, tantôt
+ * traversables. Cause profonde : la solidité était lue dans `DECOR_TYPES`
+ * (tools/room_map/teleport.py), une classification écrite pour produire
+ * une CARTE lisible, réutilisée telle quelle comme vérité physique. Voir
+ * physics/solidTypes.ts pour le détail et la règle générale.
+ *
+ * Note validée en testant (2026-09-04) : les montants de porte laissent
+ * PASSER -- c'est voulu (pas encore de contrainte physique de porte), pas
+ * un trou dans un mur ; là où il n'y a pas de porte la couverture des murs
+ * reste continue et bloque bien. Reste à traiter : la HAUTEUR de la porte
+ * (ex. ne pas pouvoir sauter par-dessus une porte basse).
  */
-// Note validée en testant (2026-09-04) : les montants de porte
-// (isDecor=false, exclus des obstacles ci-dessous) laissent PASSER --
-// c'est voulu (pas encore de vraie contrainte physique de porte), pas un
-// trou dans un mur. Confirmé : là où il n'y a pas de porte, la couverture
-// des murs reste continue et bloque bien. Reste à traiter plus tard : la
-// HAUTEUR de la porte pour l'entrée/sortie (ex. ne pas pouvoir sauter
-// par-dessus une porte basse) -- hors sujet ici, la règle de base
-// "porte=passable, mur=bloqué" est respectée.
 export function buildObstacles(entities: RoomEntity[]): Obstacle[] {
   const doors = entities.filter((e) => DOOR_TYPES.has(e.type));
   const obstacles: Obstacle[] = buildSideWalls(entities, doors);
 
   for (const entity of entities) {
-    if (entity.isDecor && !entity.isWall) {
+    if (isSolidType(entity.type) && !entity.isWall) {
       obstacles.push({ kind: "block", box: entityBox(entity, BLOCK_HALF_EXTENT, BLOCK_HALF_EXTENT, BLOCK_HEIGHT) });
     }
   }
