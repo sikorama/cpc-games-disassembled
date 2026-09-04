@@ -126,10 +126,18 @@ export function getTexture(gl: WebGL2RenderingContext, url: string): Promise<Web
   return cached;
 }
 
-/** Types de mur (0x0A-0x0F, voir docs/SYMBOLS.md) -- utilisés pour pouvoir
- * les masquer sous les vues tournées, voir LoadedRoom.build(). */
+/** Types de mur, TOUS THÈMES -- utilisés pour pouvoir les masquer sous les
+ * vues tournées, voir LoadedRoom.build().
+ *
+ * Doit rester ALIGNÉ sur `WALL_TYPES` de tools/room_map/teleport.py, d'où
+ * vient le champ `is_wall` du manifest que consomme la physique
+ * (physics/obstacles.ts) : les deux définitions avaient divergé, celle-ci
+ * ayant oublié 0x80. Résultat, dans les 24 salles "forêt" -- dont tous les
+ * murs sont des 0x80 et aucun 0x0A-0x0F -- le rendu ne reconnaissait aucun
+ * mur, alors que la physique en voyait partout. Deux définitions du même
+ * concept, c'est une de trop : si l'une bouge, l'autre doit suivre. */
 function isWallType(type: number): boolean {
-  return type >= 0x0a && type <= 0x0f;
+  return type === 0x80 || (type >= 0x0a && type <= 0x0f);
 }
 
 export async function loadRoom(gl: WebGL2RenderingContext, roomId: number): Promise<LoadedRoom> {
@@ -140,6 +148,11 @@ export async function loadRoom(gl: WebGL2RenderingContext, roomId: number): Prom
 
   const resolved: ResolvedEntity[] = [];
   const missingTypes = new Set<number>();
+  // Types sans calibration de projection : ils retombent sur [0,0], donc
+  // s'affichent DÉCALÉS sans rien signaler. C'est ce silence qui avait laissé
+  // 32 types (1053 instances) mal placés jusqu'au 2026-09-04 -- on avertit
+  // désormais, comme pour les types sans sprite.
+  const missingOffsets = new Set<number>();
 
   for (const entity of entities) {
     const sprite = spriteIndex.get(entity.type);
@@ -151,6 +164,9 @@ export async function loadRoom(gl: WebGL2RenderingContext, roomId: number): Prom
     // gris (forme du sprite), PAS les couleurs CPC réelles : le mapping
     // pen/encre -> couleur n'a jamais été décodé (docs/RENDERING_PIPELINE.md
     // §9). Chantier séparé.
+    if (getProjOffset(entity.type, entity.flags) === null) {
+      missingOffsets.add(entity.type);
+    }
     const texture = await getTexture(gl, sprite.url);
     resolved.push({
       entity,
@@ -160,6 +176,14 @@ export async function loadRoom(gl: WebGL2RenderingContext, roomId: number): Prom
       hflipState: sprite.hflipState,
       isWall: isWallType(entity.type),
     });
+  }
+
+  if (missingOffsets.size > 0) {
+    console.warn(
+      `room 0x${roomId.toString(16)}: types SANS calibration de projection ` +
+        `(affichés à [0,0], donc décalés):`,
+      [...missingOffsets].map((t) => `0x${t.toString(16)}`),
+    );
   }
 
   if (missingTypes.size > 0) {

@@ -276,7 +276,20 @@ export function playerDrawCalls(player: PlayerState, view: ViewAngle): [SpriteDr
   // docs/SESSION_SUMMARY.md §12bis. Corps et jambes partagent la clé des
   // JAMBES : ils forment une seule figure, il ne faut pas qu'un décor
   // puisse s'intercaler entre les deux moitiés.
+  // ORDRE DE DESSIN des deux moitiés. Le tri est DÉCROISSANT par sortKey
+  // (gl/spriteBatch.ts:189), donc la plus PETITE clé est peinte en dernier,
+  // donc DEVANT. Les deux moitiés étant à la même case, leur clé est
+  // identique par construction : sans départage explicite, c'est l'ordre du
+  // tableau qui décide -- et il mettait les jambes devant, dont les rangées
+  // hautes effaçaient les hanches du torse (signalé par l'utilisateur :
+  // "le bas apparaît par-dessus le haut", "il n'a pas de short").
+  //
+  // Le torse passe donc devant, par un décalage d'UN DEMI point : assez pour
+  // départager la paire, trop peu pour qu'un décor (clés entières, voir
+  // scene/room.ts) puisse s'intercaler entre les deux moitiés d'une même
+  // figure.
   const sortKey = -rx + ry - player.gridZ;
+  const bodySortKey = sortKey - 0.5;
 
   return [
     {
@@ -285,7 +298,7 @@ export function playerDrawCalls(player: PlayerState, view: ViewAngle): [SpriteDr
       size: [bodyFrame.width, bodyFrame.height],
       projOffset: bodyOffset,
       flipX: bodyFlip,
-      sortKey,
+      sortKey: bodySortKey,
     },
     {
       texture: legsFrame.texture,
