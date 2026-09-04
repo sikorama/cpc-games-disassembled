@@ -10,6 +10,7 @@ import { buildObstacles, type Obstacle } from "./physics/obstacles";
 import { createPlayerState, loadPlayerFrames, updatePlayer, playerDrawCalls, type PlayerState } from "./scene/player";
 import { createGuardState, updateGuard, guardDrawCalls, type GuardState } from "./scene/guard";
 import { drawTopView } from "./debug/topView";
+import { dumpFigureGeometry } from "./debug/figureGeometry";
 import {
   detectEdgeCrossing,
   neighborRoomId,
@@ -277,6 +278,16 @@ function setupControls(canvas: HTMLCanvasElement, state: AppState, rebuild: () =
       // R / Maj+R : quart de tour dans un sens ou dans l'autre.
       state.view = (((state.view + (e.shiftKey ? 3 : 1)) % 4) as ViewAngle);
       rebuild();
+      return;
+    }
+    if (key === "g") {
+      // Débogage : imprime la géométrie verticale des figures en deux
+      // moitiés (voir debug/figureGeometry.ts). Utilise les draw calls
+      // RÉELS, pour que le nombre imprimé soit celui que le moteur applique.
+      dumpFigureGeometry("joueur", playerDrawCalls(state.player, state.view));
+      state.guards.forEach((guard, i) =>
+        dumpFigureGeometry(`garde ${i}`, guardDrawCalls(guard, state.view)),
+      );
       return;
     }
     if (key === "t") {
