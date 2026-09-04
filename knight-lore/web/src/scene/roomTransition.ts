@@ -86,7 +86,12 @@ export function repositionForEntry(player: PlayerState, crossing: EdgeCrossing):
 
 /** Montants de porte -- réutilisé par physics/obstacles.ts pour découper
  * un passage réel dans les murs à l'emplacement des portes. */
-export const DOOR_TYPES = new Set([0x02, 0x03]);
+// Montants de porte, TOUS THÈMES. 0x04/0x05 sont la variante "forêt" de
+// 0x02/0x03 : même logique ROM exactement (fn_door_post_type_A / _B, voir
+// docs/SYMBOLS.md), seul le sprite change. Les oublier murait les 24 salles
+// forêt -- pas d'ouverture découpée dans le mur, donc pas de franchissement
+// possible (signalé par l'utilisateur sur la salle 0xD7, 2026-09-04).
+export const DOOR_TYPES = new Set([0x02, 0x03, 0x04, 0x05]);
 
 /** Rayon autour de la coordonnée perpendiculaire d'une porte considéré
  * comme faisant partie de son ouverture -- même valeur utilisée pour
