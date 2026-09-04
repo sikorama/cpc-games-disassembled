@@ -1496,6 +1496,54 @@ au même outil un second ensemble, correct cette fois. C'est traiter le
 symptôme — on double la politique au lieu de la déplacer. Le correctif est
 de sortir la décision de l'outil.
 
+## 25. Énumérer les types depuis le désassemblage, jamais depuis ce qu'on a rencontré
+
+Un moteur 8 bits identifie ses objets par un **octet de type**, et le code
+qui les consomme a besoin d'ensembles : « lesquels sont solides », « lesquels
+sont des murs », « lesquels sont des portes ». La façon naturelle de
+constituer ces ensembles est de regarder ce qu'on croise en explorant — et
+c'est précisément ce qu'il ne faut pas faire.
+
+La raison est structurelle : ces moteurs déclinent le **même objet logique
+sous plusieurs thèmes visuels**, avec un type distinct par thème et une
+logique partagée. Un ensemble bâti sur le thème le plus courant paraît
+complet, passe tous les essais faits dans les premières salles, et se révèle
+faux ailleurs — parfois très loin dans le jeu.
+
+Trois occurrences dans une seule session sur Knight Lore :
+
+| ensemble | bâti pour | ce qui manquait | effet |
+|---|---|---|---|
+| solidité physique | une carte lisible | blocs mobiles, poussables, dormants | cubes identiques, les uns solides les autres traversables |
+| calibration de projection | les types croisés dans deux salles | 32 types sur 56 | 1053 entités décalées |
+| murs et portes | le thème « pierre » | le thème « forêt » (2 types de porte, 1 de mur) | 24 salles sur 128 où le joueur est muré |
+
+**Règle** : constituer ces ensembles en parcourant la **table de dispatch**
+du moteur, pas les salles. Deux types qui pointent vers la même routine de
+logique sont le même objet, quel que soit leur sprite — c'est le critère, et
+il est mécanique. À l'inverse, deux types au même sprite peuvent être des
+objets différents : le sprite ne prouve rien dans un sens comme dans l'autre.
+
+**Test rapide** avant de figer un ensemble : *si le jeu décline cet objet en
+plusieurs thèmes, est-ce que je les ai tous ?* Suivi de : *quelle routine de
+logique partagent-ils ?* Si la réponse à la seconde est claire, la première
+se résout toute seule.
+
+**Corollaire — ne jamais définir deux fois le même concept.** Dans le même
+projet, « qu'est-ce qu'un mur » existait à deux endroits : l'outil
+d'extraction (qui incluait le mur forêt) et le moteur de rendu (qui ne
+l'incluait pas). La physique voyait donc des murs là où le rendu n'en voyait
+aucun, et rien ne signalait la divergence. Quand un concept doit être connu
+de deux côtés d'une frontière, il se **transporte** (un champ dans l'artefact
+extrait, ou un module unique importé des deux côtés) ; il ne se réénumère
+pas. Deux énumérations du même concept finissent toujours par diverger, et
+l'écart est silencieux par construction.
+
+**Symptôme à reconnaître** : un défaut qui touche un sous-ensemble net et
+cohérent du jeu — un thème, un niveau, une famille d'objets — plutôt que des
+cas dispersés. Ça ne ressemble pas à un bug de calcul, ça ressemble à une
+zone oubliée, et c'est presque toujours une énumération incomplète.
+
 ## Limites connues de cette méthode
 
 - Le sondage par breakpoint + poll a un coût réel (chaque hit/step est
