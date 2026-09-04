@@ -106,7 +106,35 @@ avancer entre-temps. Correspond exactement à la définition donnée par
 l'utilisateur en début de session. `docs/SYMBOLS.md` mis à jour en
 conséquence (entrée `0x2147`).
 
-## Point ouvert pour une session future
+## Point ouvert pour une session future — RÉSOLU 2026-09-04 (piste morte)
+
+**Conservé tel quel ci-dessous, parce que la question elle-même était le
+bug.** Ce point n'a jamais existé : il n'y a pas de bit manquant, donc pas
+de routine à trouver.
+
+`fn_get_orientation_code` (#22D0,
+`asm/code/doors_and_player_logic.asm:600-614`) fait
+`ld a,(ix+off_flags) / rrca / rrca / and #10`. Les deux `rrca` amènent le
+bit6 d'origine en position 4 : le `and #10` sélectionne donc **bit6**, pas
+bit4. Le commentaire du source disait « Combine bit4 de (ix+07) », en
+nommant la position du bit APRÈS décalage — c'est ce commentaire qui a
+envoyé chercher un écrivain pour un bit inexistant. Corrigé dans
+`asm/code/doors_and_player_logic.asm` le 2026-09-04.
+
+Et bit6 est bien écrit, sans mystère : `xor #40` dans
+`fn_player_rotate_apply` (`:423-425`), dans les deux moitiés de la bascule.
+Le retournement complet supposé problématique n'en est pas un : un
+demi-tour bascule les deux bits sur **deux frames** consécutives (90° en une
+frame, 180° en deux), avec une orientation intermédiaire observable — ce qui
+explique aussi la trajectoire diagonale relevée plus haut dans cette note
+(`x+3, y-3` pendant la convergence du type) : la frame 1 avance sur l'ancien
+axe, la frame 2 sur le nouveau. Aucun pas n'est jamais diagonal.
+
+Le piège générique est noté dans `docs/METHODOLOGY.md`.
+
+---
+
+### Texte original de 2026-08-13 (faux, gardé pour mémoire)
 
 Reste à vérifier : comment le bit "manquant" de l'orientation complète
 (bit4 de `flags`, utilisé par `fn_get_orientation_code` #22D0 en plus du

@@ -1150,6 +1150,86 @@ autrement (ici : `asm/symbols.json` porte déjà chaque nom de sprite par
 adresse, donc les copies PNG dupliquées ont été supprimées sans perte
 d'information).
 
+## 23. Un commentaire qui nomme un bit par sa position APRÈS décalage
+
+Un idiome Z80 très courant isole un bit en le décalant d'abord, puis en
+masquant :
+
+```
+        ld    a,(ix+off_flags)
+        rrca
+        rrca
+        and   #10          ; teste bit4... du registre DÉJÀ DÉCALÉ
+```
+
+Le masque parle de bit4, mais deux `rrca` ont amené le bit6 d'origine en
+position 4 : le champ réellement lu est **bit6**. Un commentaire écrit
+d'après le masque (« combine bit4 de (ix+07) ») décrit donc une grandeur qui
+n'existe pas dans la structure.
+
+Le coût n'est pas cosmétique. Le lecteur suivant cherche la routine qui
+écrit ce bit4, ne la trouve pas (elle n'existe pas), et en conclut qu'une
+partie du mécanisme reste à découvrir : on inscrit une **fausse question
+ouverte** dans les notes, et elle survit aux sessions. Dans ce projet, elle
+a survécu trois semaines et a failli bloquer un chantier au motif que le
+désassemblage était « incomplet » sur ce point — alors qu'il était complet.
+
+**Règle** : dans un commentaire, toujours nommer le bit par sa position
+**dans la structure**, jamais par le masque littéral. Si l'idiome décale,
+le dire : « `and #10` après deux `rrca` = bit6 d'origine ».
+
+**Symptôme à reconnaître** : une note dit « la routine qui écrit X est
+introuvable » pour un champ dont tout le reste du mécanisme est compris.
+Avant de chercher cette routine, revérifier que X est bien le champ que le
+code lit — compter les décalages entre la lecture et le masque.
+
+**Corollaire sur les notes** : une fausse question ouverte, une fois
+identifiée, s'**annote** plutôt qu'elle ne s'efface. La question effacée se
+repose telle quelle six mois plus tard ; la question barrée avec son
+explication ne se repose pas.
+
+## 24. Un outil d'extraction exporte des FAITS OBSERVÉS, jamais une politique
+
+Les outils qui lisent la RAM ou la ROM pour produire un artefact
+intermédiaire (JSON de salles, planche de sprites, table de symboles) ont une
+tentation constante : ajouter au passage un champ « pratique » qui n'est pas
+une observation mais un **jugement** — « ceci est du décor », « ceci est
+solide », « ceci est un ennemi ». Le champ est utile tout de suite, pour
+l'usage du moment.
+
+Le piège se referme plus tard, quand un **second consommateur** apparaît. Il
+trouve un champ qui porte exactement le nom de ce qu'il cherche, l'utilise
+comme source de vérité, et hérite silencieusement d'une classification écrite
+pour un autre usage — jamais auditée pour le sien.
+
+Dans ce projet : un ensemble de types construit pour produire une **carte
+lisible** (quoi masquer) a été réutilisé tel quel comme classification de
+**solidité physique**. Symptôme observé : des objets visuellement identiques
+se comportaient différemment, certains bloquant le passage et d'autres pas.
+Cause : plusieurs types ROM distincts partagent un même sprite, et seuls
+ceux qui gênaient la lisibilité de la carte figuraient dans l'ensemble.
+
+**Règle** : un outil d'extraction n'exporte que ce qu'il a **observé** (type,
+adresse, position, dimensions, octets bruts). Toute classification qui
+répond à la question « qu'est-ce que ça FAIT » appartient au consommateur,
+et un consommateur par politique.
+
+**Test à s'appliquer** avant d'ajouter un champ à un artefact généré : *si un
+autre programme lisait ce champ sans connaître mon usage, se tromperait-il ?*
+Si oui, le champ n'a rien à faire là.
+
+**Deuxième raison, indépendante** : une politique cuite dans un artefact
+généré ne peut plus varier. Ici, la solidité de plusieurs types est destinée
+à devenir **variable dans le temps** (un bloc poussé, un cube qui s'enfonce)
+— ce qu'un booléen figé ne porte pas. Et régénérer l'artefact exigeait de
+relancer l'émulateur : changer une règle de jeu passait par un
+redéploiement de la chaîne d'extraction entière.
+
+**Piège de correction** : découvrant le problème, le réflexe est d'ajouter
+au même outil un second ensemble, correct cette fois. C'est traiter le
+symptôme — on double la politique au lieu de la déplacer. Le correctif est
+de sortir la décision de l'outil.
+
 ## Limites connues de cette méthode
 
 - Le sondage par breakpoint + poll a un coût réel (chaque hit/step est

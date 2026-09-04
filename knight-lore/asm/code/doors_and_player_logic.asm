@@ -598,7 +598,12 @@ loc_22C9:
         ld    l,a
         jp    rst_dispatch_table
 fn_get_orientation_code:
-        ; Combine bit4 de (ix+07) + bit3 de (ix+00) -> code d'orientation 0-3
+        ; Combine bit6 de (ix+07) + bit3 de (ix+00) -> code d'orientation 0-3
+        ; ATTENTION : le `and #10` teste bit4, mais APRES les deux rrca -- il
+        ; porte donc sur le bit6 D'ORIGINE. Le commentaire disait "bit4" avant
+        ; le 2026-09-04, ce qui a fait chercher en vain la routine ecrivant un
+        ; bit4 de flags : elle n'existe pas. bit6 est ecrit par le xor #40 de
+        ; fn_player_rotate_apply.
         ld    a,(ix+off_flags)
         rrca
         rrca

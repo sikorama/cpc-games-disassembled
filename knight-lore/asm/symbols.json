@@ -2389,8 +2389,8 @@
       "name": "fn_get_orientation_code",
       "type": "code",
       "status": "confirmed",
-      "short": "Combine bit4 de (ix+07) + bit3 de (ix+00) -> code d'orientation 0-3",
-      "long": "Combine bit4 de (ix+07) + bit3 de (ix+00) -> code d'orientation 0-3"
+      "short": "Combine bit6 de (ix+07) + bit3 de (ix+00) -> code d'orientation 0-3",
+      "long": "Combine bit6 de (ix+07) + bit3 de (ix+00) -> code d'orientation 0-3"
     },
     {
       "addr": "22E4",
