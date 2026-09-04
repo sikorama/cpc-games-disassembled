@@ -1239,3 +1239,61 @@ l'utilisateur que la ligne reste continue et bloque partout où il n'y a
 PAS de porte. Comportement voulu, pas un trou de données. Reste à traiter
 plus tard : la hauteur de la porte pour l'entrée/sortie (ex. sauter
 par-dessus une porte basse) — hors sujet ici.
+
+### 15. Murs/portes, suite — plusieurs bugs réels trouvés en testant, corrigés — 2026-09-04 (EN COURS, pas committé)
+
+Session de test intensive après §14, plusieurs allers-retours. État final
+(dans `web/src/physics/obstacles.ts`, `scene/roomTransition.ts`,
+`main.ts` -- **pas encore committé**, à reprendre demain) :
+
+1. **Règle confirmée par l'utilisateur** : un mur bloque à **toute
+   hauteur**, indépendamment de son `gridZ`/`bbox_d` enregistrés (un mur
+   capturé haut dans une pile de segments empilés laissait traverser en
+   dessous). `buildObstacles()` ignore désormais la hauteur réelle pour
+   les murs (gardée pour les blocs, où sauter dessus/dessous a un sens).
+2. **Fausse piste explorée et abandonnée le jour même** : le type `0x08`
+   ("small_block/herse" partagé) traité comme mur solide après une
+   observation en salle `0xf1` -- cassait les portes, car ce type est en
+   réalité positionné dans le COULOIR d'une porte, cohérent avec la
+   HERSE (grille mobile, `fn_moving_grate_logic`) capturée LEVÉE
+   (ouverte) dans cette salle -- fidèle à cet instant du jeu réel, pas un
+   bug. Revenu à non-solide.
+3. **Bug : une transition de salle se déclenchait sans porte réelle**
+   (ex. 0x00 → 0x0f à travers un mur, à cause d'un trou de couverture).
+   Corrigé par `hasDoorForCrossing()` (`scene/roomTransition.ts`) :
+   `main.ts` ne déclenche une transition que si une porte existe
+   VRAIMENT sur ce côté, sinon `clampToEdge` même si la salle voisine
+   calculée existe.
+4. **Bug : une porte réelle restait bloquée par un mur qui la
+   chevauchait** (montants de porte et segments de mur sont des entités
+   indépendantes, rien ne garantit un trou au bon endroit). Corrigé en
+   remplaçant "un obstacle par segment de mur individuel" par UNE
+   barrière continue par côté de salle (`buildSideWalls()`), découpée
+   uniquement à l'emplacement réel des portes (rayon `DOOR_GAP_HALF_WIDTH`,
+   valeur partagée avec `hasDoorForCrossing`).
+5. **Bug : `hasDoorForCrossing` vérifiait "une porte existe sur ce côté"
+   sans vérifier la position** -- toute la largeur d'un côté ayant une
+   porte quelque part devenait franchissable. Corrigé : vérifie
+   maintenant la proximité à la coordonnée perpendiculaire RÉELLE de la
+   porte (même rayon que la découpe physique).
+6. **Bug : classer un mur par simple proximité de coordonnée à un bord
+   est ambigu dans les coins** -- un segment du mur nord proche du coin
+   est se faisait classer à tort comme mur du côté est (côté censé rester
+   ouvert), créant un faux mur. Corrigé : classification par la VRAIE
+   géométrie de l'entité (quel axe a une demi-étendue nulle,
+   `bbox_w`/`bbox_h`), la proximité de coordonnée ne sert plus que de
+   repli si la bbox est absente.
+
+Vérifié par simulation directe (Python) sur les vraies données de
+plusieurs salles (`0x00`, `0x01`, `0xf1`, `0x2e`) après le correctif 6 :
+chaque salle classe correctement ses 2 côtés muraux et ses 2 côtés
+ouverts, murs sans porte bloquent sur toute leur longueur, portes
+découpent un passage centré sur leur vraie position. Confirmé "mieux"
+par l'utilisateur, tests à poursuivre la prochaine session.
+
+**Reste ouvert / à surveiller** : cette histoire de bugs en cascade (6
+corrections en une session) montre que les données de mur/porte réelles
+restent délicates à interpréter correctement -- prudence recommandée
+avant de considérer ce sujet définitivement clos, retester d'autres
+salles (notamment des formes de salle moins standard) avant de passer à
+autre chose.

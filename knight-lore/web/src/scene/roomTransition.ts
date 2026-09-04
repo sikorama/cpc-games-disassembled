@@ -29,6 +29,7 @@
 // destination).
 
 import type { PlayerState } from "./player";
+import type { RoomEntity } from "../data/types";
 
 export const ROOM_EDGE_MIN = 0x3b;
 export const ROOM_EDGE_MAX = 0xc4;
@@ -81,6 +82,46 @@ export function repositionForEntry(player: PlayerState, crossing: EdgeCrossing):
   player.gridZ = 0x80;
   player.velZ = 0;
   player.airborne = false;
+}
+
+/** Montants de porte -- réutilisé par physics/obstacles.ts pour découper
+ * un passage réel dans les murs à l'emplacement des portes. */
+export const DOOR_TYPES = new Set([0x02, 0x03]);
+
+/** Rayon autour de la coordonnée perpendiculaire d'une porte considéré
+ * comme faisant partie de son ouverture -- même valeur utilisée pour
+ * découper le mur physique correspondant (physics/obstacles.ts), pour
+ * que "peut physiquement passer" et "déclenche une transition" désignent
+ * exactement la même zone. */
+export const DOOR_GAP_HALF_WIDTH = 16;
+
+/**
+ * BUG TROUVÉ EN TESTANT (2026-09-04), en deux temps :
+ * 1. `detectEdgeCrossing` réagissait au simple franchissement du bord,
+ *    SANS vérifier qu'une porte existe sur ce côté précis -- si la
+ *    couverture des murs avait un trou, une transition se déclenchait
+ *    vers une salle sans porte réelle entre les deux (ex. 0x00 -> 0x0f).
+ * 2. Une fois la présence d'UNE porte sur le côté vérifiée, encore fallait-il
+ *    v��rifier qu'on est PRÈS DE CETTE PORTE précisément -- sinon toute la
+ *    longueur d'un côté ayant une porte QUELQUE PART devenait franchissable
+ *    (ex. salle 0x00 côté X+ : porte réelle seulement autour de Y=115-141,
+ *    mais franchissable observé sur toute la largeur du côté).
+ * Règle CONFIRMÉE par l'utilisateur : "on ne peut passer d'une pièce à
+ * l'autre que si il y a une porte" -- et seulement AU DROIT de cette
+ * porte. `main.ts` doit appeler cette fonction avec la coordonnée
+ * perpendiculaire actuelle du joueur et refuser la transition
+ * (clampToEdge à la place) si elle renvoie `false`, même si
+ * `neighborRoomId(...)` désigne une salle qui existe bel et bien.
+ */
+export function hasDoorForCrossing(entities: RoomEntity[], crossing: EdgeCrossing, perpCoord: number): boolean {
+  const edgeCoord = crossing.side === "max" ? ROOM_EDGE_MAX : ROOM_EDGE_MIN;
+  return entities.some((e) => {
+    if (!DOOR_TYPES.has(e.type)) return false;
+    const onEdge = crossing.axis === "x" ? e.gridX === edgeCoord : e.gridY === edgeCoord;
+    if (!onEdge) return false;
+    const doorPerp = crossing.axis === "x" ? e.gridY : e.gridX;
+    return Math.abs(doorPerp - perpCoord) <= DOOR_GAP_HALF_WIDTH;
+  });
 }
 
 /** Bloque le joueur pile au bord si la salle voisine calculée n'existe

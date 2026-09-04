@@ -10,7 +10,14 @@ import { buildObstacles, type Obstacle } from "./physics/obstacles";
 import { createPlayerState, loadPlayerTexture, updatePlayer, PLAYER_PROJ_OFFSET, type PlayerState } from "./scene/player";
 import { createGuardState, updateGuard, guardDrawCalls, type GuardState } from "./scene/guard";
 import { drawTopView } from "./debug/topView";
-import { detectEdgeCrossing, neighborRoomId, repositionForEntry, clampToEdge, type EdgeCrossing } from "./scene/roomTransition";
+import {
+  detectEdgeCrossing,
+  neighborRoomId,
+  repositionForEntry,
+  clampToEdge,
+  hasDoorForCrossing,
+  type EdgeCrossing,
+} from "./scene/roomTransition";
 
 const DEFAULT_ROOM_ID = 0x00;
 const INITIAL_ZOOM = 1;
@@ -171,13 +178,20 @@ async function main() {
 
       const crossing = detectEdgeCrossing(state.player);
       if (crossing) {
+        // Une transition n'a lieu QUE là où une vraie porte existe sur ce
+        // côté précis (règle confirmée en testant, 2026-09-04) -- sinon,
+        // même si neighborRoomId() désigne une salle existante, un trou
+        // dans la couverture des murs (données réelles imparfaites, voir
+        // physics/obstacles.ts) pourrait sinon donner accès à une salle
+        // qui n'est pas réellement connectée par une porte.
         const targetRoomId = neighborRoomId(state.roomId, crossing);
-        if (validRoomIds.has(targetRoomId)) {
+        const perpCoord = crossing.axis === "x" ? state.player.gridY : state.player.gridX;
+        if (hasDoorForCrossing(state.room.getEntities(), crossing, perpCoord) && validRoomIds.has(targetRoomId)) {
           void transitionRoom(targetRoomId, crossing);
         } else {
-          // Pas de salle voisine à cette coordonnée de la grille monde
-          // 16x16 (bord du monde, ou case inutilisée) -- bloqué comme un
-          // mur plutôt que de tenter de charger une salle inexistante.
+          // Pas de porte sur ce côté, ou pas de salle voisine à cette
+          // coordonnée de la grille monde 16x16 (bord du monde, case
+          // inutilisée) -- bloqué comme un mur plutôt que de traverser.
           clampToEdge(state.player, crossing);
         }
       }
