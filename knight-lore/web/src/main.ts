@@ -10,6 +10,8 @@ import { buildObstacles, type Obstacle } from "./physics/obstacles";
 import { createPlayerState, loadPlayerFrames, updatePlayer, playerDrawCalls, type PlayerState } from "./scene/player";
 import { createGuardState, updateGuard, guardDrawCalls, type GuardState } from "./scene/guard";
 import { drawTopView } from "./debug/topView";
+import { TickAccumulator } from "./game/tick";
+import { readIntent, type ControlMode } from "./input/controlMode";
 import { dumpFigureGeometry } from "./debug/figureGeometry";
 import {
   detectEdgeCrossing,
@@ -32,6 +34,12 @@ const PLAYER_SPAWN = { gridX: 0x80, gridY: 0x80, gridZ: 0x80 };
 const MAX_DT = 0.05;
 
 interface AppState {
+  /** Mode de contrôle actif. L'original couple ce choix au périphérique
+   * (clavier -> toujours rotation) ; le portage les découple -- écart assumé,
+   * voir web/DEVIATIONS.md et input/controlMode.ts. "rotation" n'est pas
+   * encore appliqué par scene/player.ts : le pilote existe, la règle de jeu
+   * viendra avec le chantier correspondant. */
+  controlMode: ControlMode;
   room: LoadedRoom;
   /** LoadedRoom ne connaît pas son propre id -- suivi ici pour calculer la
    * salle voisine lors d'un franchissement (scene/roomTransition.ts). */
@@ -87,6 +95,7 @@ async function main() {
   const playerFrames = await loadPlayerFrames(gl, playerSpriteIndex);
   const guards = await loadGuards(DEFAULT_ROOM_ID);
   const state: AppState = {
+    controlMode: "directional",
     room,
     roomId: DEFAULT_ROOM_ID,
     view: 0,
@@ -136,8 +145,10 @@ async function main() {
     // Phase de marche remise à zéro en changeant de salle : le joueur y est
     // replacé à l'arrêt, et le gel de phase (walkAnimation.ts) le laisserait
     // sinon figé au milieu d'une foulée d'une salle à l'autre.
+    // Phase de marche remise à zéro en changeant de salle : le joueur y est
+    // replacé à l'arrêt, et le gel de phase (walkAnimation.ts) le laisserait
+    // sinon figé au milieu d'une foulée d'une salle à l'autre.
     state.player.anim.phase = 0;
-    state.player.anim.timer = 0;
     rebuild();
   }
 
@@ -172,15 +183,23 @@ async function main() {
 
   setupControls(canvas, state, rebuild);
 
+  // Boucle à PAS FIXE (game/tick.ts). Le temps réel écoulé est converti en
+  // un nombre entier de ticks de logique ; le rendu affiche l'état DU TICK,
+  // sans interpolation. Choix délibéré : interpoler afficherait le joueur à
+  // des positions qu'il n'occupe jamais, donc à des endroits où aucun test
+  // de collision n'a été fait -- des bugs perçus comme du hasard.
+  const ticker = new TickAccumulator();
   let lastTime = 0;
   function frame(now: number) {
     const dt = lastTime ? Math.min((now - lastTime) / 1000, MAX_DT) : 0;
     lastTime = now;
 
-    if (!state.transitioning) {
-      updatePlayer(state.player, state.input, state.obstacles, dt);
+    const ticks = ticker.take(dt);
+    for (let i = 0; i < ticks && !state.transitioning; i++) {
+      const intent = readIntent(state.controlMode, state.input);
+      updatePlayer(state.player, intent, state.obstacles);
       for (const guard of state.guards) {
-        updateGuard(guard, state.obstacles, dt);
+        updateGuard(guard, state.obstacles);
       }
 
       const crossing = detectEdgeCrossing(state.player);
@@ -189,8 +208,8 @@ async function main() {
         // côté précis (règle confirmée en testant, 2026-09-04) -- sinon,
         // même si neighborRoomId() désigne une salle existante, un trou
         // dans la couverture des murs (données réelles imparfaites, voir
-        // physics/obstacles.ts) pourrait sinon donner accès à une salle
-        // qui n'est pas réellement connectée par une porte.
+        // physics/obstacles.ts) pourrait donner accès à une salle qui n'est
+        // pas réellement connectée par une porte.
         const targetRoomId = neighborRoomId(state.roomId, crossing);
         const perpCoord = crossing.axis === "x" ? state.player.gridY : state.player.gridX;
         if (hasDoorForCrossing(state.room.getEntities(), crossing, perpCoord) && validRoomIds.has(targetRoomId)) {

@@ -14,14 +14,20 @@
 import type { Box3 } from "../physics/aabb";
 import { resolveAxis } from "../physics/aabb";
 import type { Obstacle } from "../physics/obstacles";
-import type { KeyboardState } from "../input/keyboard";
+import type { MoveIntent } from "../input/controlMode";
 import type { SpriteDrawCall } from "../gl/spriteBatch";
 import type { SpriteIndex } from "../data/spriteManifest";
 import { rotateGrid, viewNeedsFlip, type ViewAngle } from "../render/isoMath";
 import { getProjOffset } from "../render/isoOffsets";
 import { loadFramesByType, type LoadedFrame } from "./spriteFrames";
 import { createWalkAnimState, advanceWalkAnim, WALK_PHASE_COUNT, type WalkAnimState } from "./walkAnimation";
-import { orientationFromVector, orientationFlip, orientationSpriteSetBit, type Orientation } from "./orientation";
+import {
+  orientationFlip,
+  orientationSpriteSetBit,
+  rotateToward,
+  orientationVector,
+  type Orientation,
+} from "./orientation";
 
 // PERSONNAGE EN DEUX ENTITÉS (voir web/CONTEXT.md) -- et, côté ROM, ce
 // n'est pas une paire symétrique : l'entité JAMBES est la maîtresse, le
@@ -71,14 +77,18 @@ function bodyTypeFor(bit: number, phase: number): number {
   return PLAYER_BODY_BASE | (bit << 3) | phase;
 }
 
-// Constantes de gameplay -- valeurs de DÉPART à ajuster en jouant, PAS des
-// faits établis. DETTE (web/DEVIATIONS.md) : l'original ne connaît pas de
-// vitesse en unités/seconde, il fait ±3 unités par FRAME DE LOGIQUE sur un
-// seul axe (tbl_player_forward_vector_dispatch #22E4). La conversion du
-// portage en pas fixe est un chantier à part.
-export const PLAYER_SPEED = 60;
-export const GRAVITY = -300;
-export const JUMP_VELOCITY = 120;
+/** Pas du joueur, en unités de grille par TICK, sur UN SEUL axe.
+ * FAIT ROM confirmé : tbl_player_forward_vector_dispatch (#22E4,
+ * asm/code/doors_and_player_logic.asm:615-650) applique ±3 sur x ou y,
+ * jamais sur les deux. */
+export const PLAYER_STEP = 3;
+
+// Gravité et saut : PAS des faits ROM (le désassemblage du saut n'a pas été
+// mené). Valeurs de réglage, converties des anciennes constantes en
+// unités/seconde à 50 Hz pour ne pas changer le ressenti au passage au pas
+// fixe : -300 u/s² -> -300/50² et 120 u/s -> 120/50. Exprimées par TICK.
+export const GRAVITY = -0.12;
+export const JUMP_VELOCITY = 2.4;
 
 // Boîte de collision du joueur -- approximation, cohérente en échelle
 // avec les footprints de physics/obstacles.ts.
@@ -111,6 +121,15 @@ export interface PlayerState {
    * 1 frame à 90°, 2 frames à 180°. Le modèle convergent arrive avec le
    * chantier « pas fixe ». */
   orientation: Orientation;
+  /** Cooldown de rotation, en ticks. FAIT ROM : 2 ticks, armé par `or #02`
+   * sur off_state_flags_2 (asm/code/doors_and_player_logic.asm:410-412) --
+   * et court-circuité par le chemin directional, qui entre dans la bascule
+   * APRÈS l'armement. Donc inerte tant que le mode rotation n'est pas
+   * actif ; présent dès maintenant parce que l'ajouter après coup
+   * demanderait de reprendre la boucle. */
+  turnCooldown: number;
+  /** Alternance d'axe pour une diagonale tenue -- voir updatePlayer. */
+  diagonalToggle: number;
 }
 
 /** Charge les deux jeux de marche du corps et des jambes (2 x 6 phases
@@ -147,6 +166,8 @@ export function createPlayerState(
     legsFrames: frames.legsFrames,
     anim: createWalkAnimState(),
     orientation: 1,
+    turnCooldown: 0,
+    diagonalToggle: 0,
   };
 }
 
@@ -165,72 +186,98 @@ export function playerBox(player: PlayerState): Box3 {
 }
 
 /**
- * Avance la simulation du joueur d'un pas `dt` (secondes). Mutation en
- * place, cohérent avec le style mutable déjà utilisé pour AppState
- * (main.ts). Ordre de résolution des axes : Z PUIS X PUIS Y -- comme le
- * solveur du jeu original (asm/code/doors_and_player_logic.asm), pour que
- * le déplacement horizontal de la même frame voie déjà la hauteur
- * corrigée (évite de "rentrer" dans le dessus d'un bloc qu'on vient de
- * heurter par en dessous).
+ * Avance la simulation du joueur d'UN TICK de logique (pas fixe, voir
+ * game/tick.ts). Mutation en place, cohérent avec le style mutable déjà
+ * utilisé pour AppState (main.ts). Ordre de résolution des axes : Z PUIS X
+ * PUIS Y -- comme le solveur du jeu original
+ * (asm/code/doors_and_player_logic.asm), pour que le déplacement horizontal
+ * du même tick voie déjà la hauteur corrigée (évite de "rentrer" dans le
+ * dessus d'un bloc qu'on vient de heurter par en dessous).
+ *
+ * RÈGLES D'ORIENTATION ET D'AVANCE, mode directional -- toutes confirmées
+ * (asm/code/doors_and_player_logic.asm:286-365) :
+ *
+ * - une direction pressée qui ne correspond pas à l'orientation courante
+ *   déclenche une ROTATION, et le tick n'avance PAS ;
+ * - sauf pour la direction +Y, portée par le bit qui sert AUSSI de drapeau
+ *   « avance » (unique `set 2,c` en :362, unique `res 2,c` en :302) : là,
+ *   la rotation et le pas de ±3 ont lieu dans le MÊME tick. Trois
+ *   directions sur quatre coûtent donc un tick de rotation, la quatrième
+ *   est gratuite. C'est un artefact du partage d'un bit, pas un choix de
+ *   design -- mais il est observable, donc reproduit ;
+ * - une fois aligné, chaque tick avance de PLAYER_STEP sur un seul axe ;
+ * - aucun cooldown sur ce chemin : le chemin directional entre dans la
+ *   bascule APRÈS l'armement du compteur (:410-412 sautées).
+ *
+ * DIAGONALE TENUE (écart assumé, web/DEVIATIONS.md) : l'original n'en a
+ * pas -- ses diagonales sont un transitoire de demi-tour. Le portage
+ * alterne donc l'axe parcouru à chaque tick, ce qui donne une trajectoire
+ * diagonale à la MÊME vitesse que les directions cardinales, sans avoir à
+ * inventer un vecteur diagonal ni une vitesse en racine de deux.
+ * L'orientation, elle, reste sur l'axe primaire : il n'existe aucune règle
+ * ROM d'orientation pour une diagonale tenue, et faire alterner le regard
+ * à 50 Hz scintillerait.
  */
-export function updatePlayer(player: PlayerState, input: KeyboardState, obstacles: Obstacle[], dt: number): void {
-  let dx = 0;
-  let dy = 0;
-  if (input.isDown("a") || input.isDown("arrowleft")) dx -= 1;
-  if (input.isDown("d") || input.isDown("arrowright")) dx += 1;
-  if (input.isDown("w") || input.isDown("arrowup")) dy -= 1;
-  if (input.isDown("s") || input.isDown("arrowdown")) dy += 1;
-  const len = Math.hypot(dx, dy);
+export function updatePlayer(player: PlayerState, intent: MoveIntent, obstacles: Obstacle[]): void {
+  if (player.turnCooldown > 0) player.turnCooldown--;
 
-  // Orientation depuis l'axe dominant de l'input BRUT (avant
-  // normalisation). Persiste sans input. Voir la dette notée sur
-  // PlayerState.orientation : la ROM converge par bascule de bit, elle
-  // n'assigne pas.
-  if (len > 0) {
-    player.orientation = orientationFromVector(dx, dy);
+  const [primary, secondary] = intent.targets;
+  let stepOrientation: Orientation | null = null;
+
+  if (primary !== undefined) {
+    if (player.orientation !== primary) {
+      // Non aligné : on tourne. Le tick n'avance que si la direction
+      // demandée est celle qui porte le drapeau d'avance (+Y).
+      player.orientation = rotateToward(player.orientation, primary);
+      if (primary === 2) stepOrientation = player.orientation;
+    } else if (secondary !== undefined) {
+      // Diagonale tenue : on alterne l'axe parcouru, orientation inchangée.
+      stepOrientation = player.diagonalToggle % 2 === 0 ? primary : secondary;
+      player.diagonalToggle++;
+    } else {
+      stepOrientation = primary;
+      player.diagonalToggle = 0;
+    }
+  } else {
+    player.diagonalToggle = 0;
   }
 
-  if (len > 0) {
-    dx /= len;
-    dy /= len;
-  }
-  player.velX = dx * PLAYER_SPEED;
-  player.velY = dy * PLAYER_SPEED;
+  const [ux, uy] = stepOrientation === null ? [0, 0] : orientationVector(stepOrientation);
+  player.velX = ux * PLAYER_STEP;
+  player.velY = uy * PLAYER_STEP;
 
-  // Le cycle de marche n'avance que sur un déplacement HORIZONTAL
-  // effectif (comme l'original, voir walkAnimation.ts) -- pas pendant un
-  // saut/chute pur sans input directionnel.
-  advanceWalkAnim(player.anim, len > 0, dt);
+  // Le cycle de marche n'avance que sur un déplacement HORIZONTAL effectif
+  // (comme l'original, voir walkAnimation.ts) -- ni pendant un tick de pure
+  // rotation, ni pendant un saut sans direction tenue.
+  advanceWalkAnim(player.anim, stepOrientation !== null);
 
   // Gravité continue (pas seulement pendant un arc de saut) : sans appui
   // sur rien, le joueur tombe toujours.
-  player.velZ += GRAVITY * dt;
-  if (input.consumeJustPressed(" ") && !player.airborne) {
+  player.velZ += GRAVITY;
+  if (intent.jump && !player.airborne) {
     player.velZ = JUMP_VELOCITY;
     player.airborne = true;
   }
 
   const obstacleBoxes = obstacles.map((o) => o.box);
-  const dz = player.velZ * dt;
+  const dz = player.velZ;
 
   const zRes = resolveAxis(playerBox(player), dz, "z", obstacleBoxes);
   player.gridZ += zRes.delta;
   if (zRes.blocked) {
     player.velZ = 0;
-    // "Atterri" seulement si le blocage vient d'un déplacement vers le
-    // BAS (dz<=0) -- un blocage vers le haut (plafond/dessous d'un bloc)
-    // laisse le joueur en l'air, il retombera dès la prochaine frame.
+    // "Atterri" seulement si le blocage vient d'un déplacement vers le BAS
+    // (dz<=0) -- un blocage vers le haut (plafond/dessous d'un bloc) laisse
+    // le joueur en l'air, il retombera dès le tick suivant.
     if (dz <= 0) player.airborne = false;
   } else {
     player.airborne = true;
   }
 
-  const dxDelta = player.velX * dt;
-  const xRes = resolveAxis(playerBox(player), dxDelta, "x", obstacleBoxes);
+  const xRes = resolveAxis(playerBox(player), player.velX, "x", obstacleBoxes);
   player.gridX += xRes.delta;
 
-  const dyDelta = player.velY * dt;
-  const yRes = resolveAxis(playerBox(player), dyDelta, "y", obstacleBoxes);
+  const yRes = resolveAxis(playerBox(player), player.velY, "y", obstacleBoxes);
   player.gridY += yRes.delta;
 }
 

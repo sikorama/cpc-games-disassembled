@@ -62,8 +62,12 @@ function legsTypeFor(base: number, bit: number, phase: number): number {
 
 // Amplitude ±2 unités de grille CONFIRMÉE par désassemblage
 // (tbl_guard_patrol_vector_dispatch), traduite ici en vitesse continue --
-// valeur de départ à ajuster, pas un fait établi (comme PLAYER_SPEED).
-export const GUARD_SPEED = 40;
+// Pas du garde, en unités de grille par TICK, sur UN SEUL axe.
+// FAIT ROM confirmé : tbl_guard_patrol_vector_dispatch (#12B1,
+// asm/code/entity_logic_mechanical.asm:553-564) charge des vecteurs bruts
+// #00FE / #0200 / #0002 / #FE00, soit ±2 sur x ou y. Le garde est donc
+// STRUCTURELLEMENT plus lent que le joueur (±3) -- ce n'est pas un réglage.
+export const GUARD_STEP = 2;
 const GUARD_HALF_EXTENT = 6;
 const GUARD_HEIGHT = 24;
 
@@ -139,7 +143,7 @@ export function guardBox(guard: GuardState): Box3 {
   };
 }
 
-/** Avance la patrouille d'un pas `dt`. Mutation en place, cohérent avec
+/** Avance la patrouille d'UN TICK de logique. Mutation en place, cohérent avec
  * scene/player.ts. Ne teste QUE l'axe de déplacement courant (le garde
  * ne bouge jamais en diagonale) -- si le déplacement est bloqué, tourne
  * pour LA FRAME SUIVANTE (léger décalage d'un frame par rapport au
@@ -156,10 +160,10 @@ export function guardBox(guard: GuardState): Box3 {
  * distincts, sans lien géométrique entre eux. Acceptable tant que le
  * garde reste dans la salle (confirmé) ; à resserrer si le décalage
  * visuel gêne. */
-export function updateGuard(guard: GuardState, obstacles: Obstacle[], dt: number): void {
+export function updateGuard(guard: GuardState, obstacles: Obstacle[]): void {
   const axis = DIRECTION_AXIS[guard.direction];
   const step = DIRECTION_STEP[guard.direction];
-  const delta = step * GUARD_SPEED * dt;
+  const delta = step * GUARD_STEP;
   const obstacleBoxes = obstacles.map((o) => o.box);
 
   const res = resolveAxis(guardBox(guard), delta, axis, obstacleBoxes);
@@ -185,7 +189,7 @@ export function updateGuard(guard: GuardState, obstacles: Obstacle[], dt: number
     axis === "y" ? step : 0,
   );
 
-  advanceWalkAnim(guard.anim, res.delta !== 0, dt);
+  advanceWalkAnim(guard.anim, res.delta !== 0);
 
   if (blocked) {
     guard.direction = ((guard.direction + 1) % 4) as GuardDirection;

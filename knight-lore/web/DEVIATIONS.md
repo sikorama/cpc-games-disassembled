@@ -26,15 +26,40 @@ Le portage autorise deux axes simultanés et normalise le vecteur.
 `asm/code/doors_and_player_logic.asm:615-650`) n'a que 4 entrées, ±3 sur
 **un seul** axe, jamais deux. Une diagonale n'y a aucune représentation.
 
-*Justification* : confort de pilotage au clavier. **À trancher** : la
-vitesse diagonale (√2 fois plus rapide, ou normalisée) n'a aucune référence
-ROM — il faudra choisir explicitement.
+*Justification* : confort de pilotage au clavier.
+
+*Réalisation (tranchée au passage au pas fixe)* : l'axe parcouru **alterne à
+chaque tick**. La trajectoire est diagonale, la vitesse identique aux
+directions cardinales, et il n'y a ni vecteur diagonal ni vitesse en racine
+de deux à inventer — les deux seules autres options, toutes deux sans
+référence ROM. L'orientation reste sur l'axe primaire : aucune règle ROM ne
+couvre le regard pendant une diagonale tenue, et le faire alterner à 50 Hz
+scintillerait.
 
 *Ne pas confondre* avec les diagonales **émergentes** de l'original : en
 mode directional, un demi-tour maintenu sur HAUT avance sur l'ancien axe
 puis sur le nouveau, produisant une trajectoire diagonale sur 2 frames.
 C'est un transitoire de rotation, pas une direction tenue — ça ne couvre
 pas l'écart ci-dessus.
+
+### Cadence de la boucle de logique (50 Hz)
+Le portage tourne à pas fixe, 50 ticks/seconde (`web/src/game/tick.ts`).
+
+*Fait ROM* : **il n'y en a pas, et c'est vérifié**. `fn_main_loop` (#05AE) est
+une boucle libre : aucun `HALT`, aucune lecture du port PPI B, aucune
+synchronisation vidéo, et l'IM 1 à 300 Hz ne sert qu'au moteur de son sans
+rien signaler à la boucle (`asm/code/low_ram_and_boot.asm:78-94`, :224-259).
+`var_frame_counter` (#006A) compte des frames de LOGIQUE, pas des frames
+vidéo. Le seul régulateur est une contre-réaction sur la charge
+(`fn_render_workload_pacing_delay` #0618, `B = 6 - charge`) qui ralentit les
+frames légères sans accélérer les lourdes.
+
+*Justification* : l'original ralentit donc dans les salles chargées. C'est un
+comportement réel mais une contrainte matérielle, pas une intention de game
+design — décision de ne pas le reproduire. La cadence choisie est le seul
+écart du portage dont la case « fait de référence » dise « le jeu n'en a
+pas » plutôt qu'une adresse. Une seule constante à changer (`TICK_HZ`) si le
+jeu paraît trop rapide.
 
 ### Mode de contrôle découplé du périphérique
 Le portage propose (à terme) les deux modes quel que soit le périphérique.
@@ -72,35 +97,21 @@ que l'original, à ne pas confondre avec de la fidélité.
 
 Provisoire, à résorber. Ordre indicatif de traitement.
 
-### Boucle en `dt` continu au lieu du pas fixe
-`PLAYER_SPEED`, `GUARD_SPEED` et `WALK_FRAME_DURATION` sont en unités par
-seconde, réglées à l'œil. L'original ne connaît que le **pas par frame de
-logique** : ±3 unités sur un axe pour le joueur (#22E4), ±2 pour le garde
-(`tbl_guard_patrol_vector_dispatch` #12B1), et une phase d'animation par
-frame. Chantier : convertir la boucle en pas fixe, rendu à l'état du tick
-sans interpolation.
+### Gravité et saut
+`GRAVITY` et `JUMP_VELOCITY` (`scene/player.ts`) sont des valeurs de réglage.
 
-### Orientation assignée au lieu de convergente
-`updatePlayer()` range directement `player.orientation`. L'original ne
-range **jamais** l'orientation : il bascule `type` bit3 (`xor #08`) et
-`flags` bit6 (`xor #40`) — `asm/code/doors_and_player_logic.asm:419-425`.
-Un virage à 90° converge en 1 frame, un demi-tour en 2, avec une
-orientation intermédiaire observable. Dépend du pas fixe.
+*Fait ROM* : **pas encore désassemblé** — la logique de saut n'a pas été
+tracée. Les valeurs actuelles sont les anciennes constantes en unités/seconde
+converties à 50 Hz, pour que le passage au pas fixe ne change pas le ressenti.
 
-### Cooldown de rotation non implémenté
-2 frames de logique en mode rotation, armé par `or #02` sur
-`off_state_flags_2` (`:410-412`), et court-circuité en mode directional.
-
-### Asymétrie du mode directional non reproduite
-Trois directions sur quatre coûtent une frame de rotation avant d'avancer ;
-la quatrième — HAUT, portée par le bit qui est aussi le bit « avance » —
-tourne et avance dans la même frame (`:291-303`, unique `set 2,c` en
-`:362`).
-
-### Mode de contrôle « rotation » non implémenté
-Seul le mode directional existe côté portage. Structure à prévoir : le
-mode de contrôle est un **pilote d'entrée** produisant des événements
-(`turnTo`, `stepForward`), pas une branche dans la boucle.
+### Mode de contrôle « rotation » non appliqué
+La structure est en place — le mode est un **pilote d'entrée**
+(`input/controlMode.ts`) qui produit une intention, et le pilote « rotation »
+existe déjà et renvoie `turn` / `advance`. Ce qui manque est la règle côté
+`scene/player.ts`, qui ne consomme aujourd'hui que `targets` (directional).
+Le cooldown de rotation de 2 ticks est déjà modélisé
+(`PlayerState.turnCooldown`) et restera inerte jusque-là, puisque le chemin
+directional le court-circuite dans l'original aussi.
 
 ### Poses alternatives aléatoires
 Les slots 6/7 de chaque groupe de types (0x26/0x27, 0x2E/0x2F → `hero_up6`,

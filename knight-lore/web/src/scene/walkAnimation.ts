@@ -17,19 +17,17 @@
 // mécanique entière, pas seulement les sprites.
 export const WALK_PHASE_COUNT = 6;
 
-// DETTE (voir web/DEVIATIONS.md) : l'original n'a pas de durée en
-// secondes -- il avance d'une phase par FRAME DE LOGIQUE, sur la cadence
-// fixe du CPC. Cette constante est un pis-aller en attendant la conversion
-// du portage en pas fixe ; elle disparaîtra alors.
-export const WALK_FRAME_DURATION = 0.12;
-
+// Une phase par TICK de logique, exactement comme l'original avance d'une
+// phase par frame de logique -- il n'y a pas de durée en secondes dans le
+// jeu. Animation et déplacement sont donc liés par construction : régler la
+// cadence du tick (game/tick.ts) les accorde tous les deux d'un coup, au
+// lieu d'avoir à faire correspondre une durée d'image à une vitesse.
 export interface WalkAnimState {
   phase: number;
-  timer: number;
 }
 
 export function createWalkAnimState(): WalkAnimState {
-  return { phase: 0, timer: 0 };
+  return { phase: 0 };
 }
 
 /**
@@ -45,14 +43,7 @@ export function createWalkAnimState(): WalkAnimState {
  * encore implémentées (dette). Les jambes n'ont même pas de slot 6/7 :
  * 0x16/0x17 sont la statue de crapaud et le tapis à clous.
  */
-export function advanceWalkAnim(state: WalkAnimState, moving: boolean, dt: number): void {
-  if (!moving) {
-    state.timer = 0;
-    return;
-  }
-  state.timer += dt;
-  while (state.timer >= WALK_FRAME_DURATION) {
-    state.timer -= WALK_FRAME_DURATION;
-    state.phase = (state.phase + 1) % WALK_PHASE_COUNT;
-  }
+export function advanceWalkAnim(state: WalkAnimState, moving: boolean): void {
+  if (!moving) return;
+  state.phase = (state.phase + 1) % WALK_PHASE_COUNT;
 }
