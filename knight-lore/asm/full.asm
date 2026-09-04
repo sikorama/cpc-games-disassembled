@@ -2168,12 +2168,17 @@ fn_guard_legs_logic_alt:
         ld    (ix+off_pending_grid_x),a
         jp    loc_1139
 fn_guard_walk_animation_toggle:
-        ; Bascule le bit 0 du type (0x1E<->0x1F) selon la comparaison des
-        ; composantes du vecteur de déplacement (ix+09)/(ix+0A) — battement de
-        ; marche 2 phases. (poll RAM): combiné au bit 6 des flags (miroir,
-        ; indépendant), donne 4 combinaisons visuelles totales — explique la
-        ; perception d'une "animation à 4 frames" bien que le mécanisme structurel
-        ; soit un cycle à 2 valeurs de type.
+        ; Pose le bit 0 du type (0x1E<->0x1F) ET le bit 6 des flags selon l'axe
+        ; DOMINANT du vecteur de déplacement (ix+09)/(ix+0A) puis son signe.
+        ; CORRIGÉ 2026-09-04 : ce n'est PAS un "battement de marche 2 phases"
+        ; comme le disait ce commentaire -- les deux bits sont dérivés du signe
+        ; du vecteur, donc c'est un CODE D'ORIENTATION, la même grandeur que
+        ; (flags.bit6 << 1) | type.bit3 chez le joueur (fn_get_orientation_code
+        ; #22D0), au bit près : le corps du garde loge son sélecteur de dessin
+        ; en type.bit0 et non type.bit3. Les "4 combinaisons visuelles" sont
+        ; les 4 orientations, pas 2 phases x 2 miroirs. Même structure que
+        ; fn_guard_legs_logic (#0FD8) ci-dessus. La phase de marche, elle, vit
+        ; dans les 3 bits bas du type et est avancée par le recycleur #2231.
         ld    a,(ix+#09)
         or    (ix+#0A)
         ret    z
@@ -5192,7 +5197,12 @@ loc_22C9:
         ld    l,a
         jp    rst_dispatch_table
 fn_get_orientation_code:
-        ; Combine bit4 de (ix+07) + bit3 de (ix+00) -> code d'orientation 0-3
+        ; Combine bit6 de (ix+07) + bit3 de (ix+00) -> code d'orientation 0-3
+        ; ATTENTION : le `and #10` teste bit4, mais APRES les deux rrca -- il
+        ; porte donc sur le bit6 D'ORIGINE. Le commentaire disait "bit4" avant
+        ; le 2026-09-04, ce qui a fait chercher en vain la routine ecrivant un
+        ; bit4 de flags : elle n'existe pas. bit6 est ecrit par le xor #40 de
+        ; fn_player_rotate_apply.
         ld    a,(ix+off_flags)
         rrca
         rrca
