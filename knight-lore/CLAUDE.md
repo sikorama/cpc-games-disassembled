@@ -12,6 +12,13 @@ docs/SYMBOLS.md : les symboles du source assembleur
 docs/SESSION_SUMMARY.md
 docs/RENDERING_PIPELINE.md : l'algorithme de rendu isométrique complet, indépendant de l'implémentation Z80 -- référence pour une future réécriture dans un autre langage
 
+Le portage web est dans /web, et deux documents le gouvernent :
+
+web/CONTEXT.md : le glossaire du domaine (uniquement des termes, aucun détail d'implémentation)
+web/DEVIATIONS.md : la liste FERMÉE des écarts du portage par rapport au jeu d'origine. Le portage vise la fidélité : la ROM fait autorité et, en cas de doute, c'est le jeu d'origine qui tranche. Un écart qui ne figure pas dans ce fichier est donc un bug, pas une liberté. Chaque entrée porte obligatoirement un fait ROM de référence, ou explicitement "pas encore désassemblé". Corollaire : quand une information manque parce que le désassemblage n'est pas terminé, finaliser le désassemblage AVANT d'écrire le code -- bloquant pour toute mécanique de jeu (orientation, animation, collision, vitesses), toléré en stub seulement pour le cosmétique.
+
+Attention : docs/METHODOLOGY.md ne reçoit QUE la méthodologie d'analyse et de désassemblage, jamais les leçons d'architecture du portage web -- sauf reformulées côté rétro-ingénierie.
+
 Le code désassemblé (en cours) est dans /asm
 Les tools dans /tools servent à générer la map, ou encore désassembler une partie de la ram du jeu quand il est en cours d'execution dans l'émulateur amspirit
 
