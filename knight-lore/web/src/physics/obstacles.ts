@@ -29,6 +29,13 @@ export interface PushTarget {
    * la ROM recopie `(ix+09)`, l'octet de structure, pas le registre de
    * travail). */
   receivePush(axis: "x" | "y", delta: number): void;
+  /** Vecteur en attente, LU par ce qui repose dessus. `fn_entity_collide_axis_z`
+   * (#24EA) lit `(iy+09)`/`(iy+0A)` -- les champs du SUPPORT -- pour les
+   * recopier dans le mobile posé dessus. La lecture fait donc partie du
+   * contrat au même titre que l'écriture : sans elle, un objet posé sur un
+   * coffre poussé resterait sur place. */
+  readonly pendingX: number;
+  readonly pendingY: number;
 }
 
 export interface Obstacle {

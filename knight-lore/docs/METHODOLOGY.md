@@ -1783,6 +1783,24 @@ lire les valeurs écrites comme un jeu de cas de test fourni par les auteurs du
 jeu. Un champ mis à 0 par l'un et à 1 par l'autre, immédiatement avant le même
 appel, n'est jamais une coïncidence.
 
+**Le même piège, une seconde fois, au même endroit.** Trois autres routines --
+celles des meubles poussables -- n'écrivent pas non plus ce champ. Comme rien ne
+le remet à zéro, le décrément de prélude s'accumule : ces objets **tombent**, en
+accélérant d'une unité par tick. On en avait pourtant conclu l'inverse, et
+inscrit « pas de gravité pour ces types, pas encore désassemblé » -- alors que
+le mécanisme avait déjà été lu deux fois, et que la troisième lecture ne
+demandait que de remarquer une ABSENCE d'instruction. Chercher ce qu'une routine
+fait est naturel ; remarquer ce qu'elle ne fait pas demande de connaître
+d'avance le champ à surveiller. D'où l'intérêt d'inventorier les appelants une
+bonne fois : la liste dit aussi qui n'écrit rien.
+
+**Corollaire sur les conclusions d'ABSENCE.** Cette même note s'appuyait sur un
+argument de données -- « des instances capturées stables, sans rien en dessous
+». Re-vérifié, c'était faux : toutes avaient un support. Une affirmation
+d'absence tirée des données doit dire **comment l'absence a été vérifiée**,
+sinon elle a exactement le poids d'une intuition, tout en ayant l'air d'un fait.
+Celle-ci a bloqué du travail pendant des semaines.
+
 **La leçon plus large.** Une note « piste ouverte, mécanisme pas trouvé dans
 cette routine » désigne presque toujours un mécanisme qui est **ailleurs par
 construction** — dans une primitive partagée, un prélude, un dispatch — et non

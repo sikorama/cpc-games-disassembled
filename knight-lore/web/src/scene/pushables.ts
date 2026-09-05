@@ -37,17 +37,19 @@ import { clampDeltaToRoom, type RoomBound } from "../physics/roomBounds";
 export class PushableBody {
   gridX: number;
   gridY: number;
-  /** Constante. Aucune GRAVITÉ n'est appliquée aux corps poussables : la ROM
-   * n'en donne pas de chemin confirmé pour eux, et les données vont dans le
-   * même sens -- plusieurs instances sont capturées stables à `0x8C` ou `0x98`
-   * sans rien en dessous (salles 0x08, 0x40, 0x58). Les faire tomber serait
-   * inventer une mécanique. Inscrit comme dette dans web/DEVIATIONS.md. */
-  readonly gridZ: number;
+  gridZ: number;
 
   /** Vecteur en attente, en unités de grille (`+0x09`/`+0x0A` de la structure
    * d'entité). Écrit par le pousseur, consommé par ce corps à son tick. */
   pendingX = 0;
   pendingY = 0;
+  /** Compteur vertical (`+0x0B`). C'est LUI la gravité : aucune des trois
+   * routines poussables n'écrit ce champ, et le prélude de `RST 10`
+   * (`dec (ix+0B)`, #0010) le décrémente à chaque tick avant que la primitive
+   * ne l'applique comme composante Z. La chute ACCÉLÈRE donc d'une unité par
+   * tick, sans vitesse terminale -- contrairement au joueur, dont
+   * `fn_player_gravity_and_door_dispatch` fait converger ce même champ. */
+  pendingZ = 0;
 
   constructor(
     readonly resolved: ResolvedEntity,
@@ -146,7 +148,9 @@ export function updatePushables(
       body.pendingY = 0;
     }
 
-    if (body.pendingX === 0 && body.pendingY === 0) continue;
+    // PLUS D'ARRÊT ANTICIPÉ SUR UN VECTEUR NUL. La primitive de déplacement
+    // tourne à chaque tick, vecteur horizontal ou pas : c'est elle qui fait
+    // tomber. Sortir tôt ici, c'est supprimer la gravité.
 
     // Les AUTRES corps sont des obstacles à leur position courante -- et des
     // cibles de poussée, comme pour le joueur : le scan par axe de la ROM est
@@ -154,6 +158,42 @@ export function updatePushables(
     const obstacles = staticObstacles.concat(
       bodies.filter((other) => other !== body).map((other) => other.obstacle()),
     );
+
+    // PRÉLUDE DE `RST 10` : `dec (ix+0B)`, inconditionnel, avant tout le reste
+    // (asm/code/low_ram_and_boot.asm, vecteur RST 10). C'est la seule source de
+    // gravité de ces corps.
+    body.pendingZ -= 1;
+
+    // AXE Z EN PREMIER, puis X, puis Y -- l'ordre de
+    // fn_entity_movement_vector_resolve (#23F7), pas un choix du portage.
+    //
+    // Le plancher vient de fn_entity_clamp_pending_z (#230C), qui compare
+    // `grid_z + delta` à `var_room_data_field_2` : un PLANCHER simple à 0x80,
+    // et non la formule centrée des axes X/Y. Les trois calibrations de salle
+    // donnent toutes 0x80, mais on lit quand même la valeur de la salle plutôt
+    // que d'écrire la constante -- c'est la même donnée que les bornes X/Y.
+    const floorLimited = Math.max(body.pendingZ, bounds.z - body.gridZ);
+    const zRes = resolveAxis(body.box(), floorLimited, "z", obstacles);
+    body.gridZ += zRes.delta;
+
+    // PORTÉ PAR CE SUR QUOI ON REPOSE. `fn_entity_collide_axis_z` (#24EA), une
+    // fois le chevauchement constaté, fait hériter au mobile le vecteur en
+    // attente de son SUPPORT -- mais seulement sur les axes où le sien est
+    // encore nul (`ld a,(ix+09) / and a / jr nz`), pour ne pas écraser une
+    // poussée qu'il aurait déjà reçue. C'est ce qui fait qu'une pile poussée
+    // avance d'un bloc au lieu de se défaire.
+    const support = zRes.blocked && zRes.delta <= 0 ? zRes.blocker?.pushTarget : undefined;
+    if (support) {
+      if (body.pendingX === 0) body.pendingX = support.pendingX;
+      if (body.pendingY === 0) body.pendingY = support.pendingY;
+    }
+
+    // Le compteur vertical est réécrit ROGNÉ (`ld (ix+0B),h` en loc_243E) :
+    // posé sur quelque chose, il retombe à 0, et le prélude du tick suivant le
+    // remet à -1 -- une sonde d'une unité par tick, exactement comme la ROM.
+    // C'est aussi ce qui remet la chute à zéro à l'atterrissage plutôt que de
+    // laisser l'accélération s'accumuler pendant le repos.
+    body.pendingZ = zRes.delta;
 
     // LIMITE DE SALLE, appliquée AVANT le scan de collision solide -- c'est
     // l'ordre de la ROM, où fn_entity_clamp_pending_x/_y sont appelées par
