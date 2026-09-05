@@ -93,6 +93,29 @@ une décision de gameplay.
 directional par défaut donne le mode qui n'est **pas** celui du clavier
 d'origine.
 
+### Séquences pseudo-aléatoires non reproductibles
+Le portage tire ses valeurs pseudo-aléatoires avec `Math.random()`. Les
+*règles* qui encadrent chaque tirage sont reproduites fidèlement ; la
+*séquence*, non.
+
+*Fait ROM* : `var_pseudo_random_acc` (#006D) est un accumulateur mélangé deux
+fois par tour de boucle — une fois **par entité dispatchée** (`acc += R`, le
+registre de rafraîchissement du Z80) et une fois par frame
+(`acc += mem[var_frame_counter] + bas + haut`, qui traite la valeur du
+compteur de frames comme une **adresse** et lit l'octet qui s'y trouve —
+`asm/code/low_ram_and_boot.asm:246-272`).
+
+*Pourquoi c'est irréductible* : ni le registre `R` ni la lecture d'un octet à
+une adresse arbitraire n'ont d'équivalent dans le portage. Reproduire la
+séquence exigerait d'émuler la disposition mémoire du CPC, ce qui n'est pas le
+projet. Cadence et distribution sont fidèles, l'ordre ne l'est pas.
+
+*Ce que ça affecte aujourd'hui* : l'ordre des 4 types transitoires pendant la
+transformation (`scene/player.ts`, `pickTransformType`). La règle observable —
+« jamais deux fois le même d'affilée », obtenue par un `xor #01` quand le
+tirage retombe sur le type courant — est, elle, reproduite exactement : c'est
+elle qui produit le tremblement, pas la séquence.
+
 ### Formes de collision par entité (sphère pour les ennemis ronds)
 Prévu, pas encore implémenté.
 
@@ -114,11 +137,21 @@ Provisoire, à résorber. Ordre indicatif de traitement.
 ### Gravité et saut
 `GRAVITY` et `JUMP_VELOCITY` (`scene/player.ts`) sont des valeurs de réglage.
 
-*Fait ROM* : **pas encore désassemblé** — la logique de saut n'a pas été
-tracée. Les valeurs sont exprimées en unités/seconde (`-300 u/s²`, `120 u/s`)
-et converties en unités/tick à partir de `TICK_HZ` : ce sont les seules
-grandeurs du portage réglées en temps réel, précisément parce qu'aucune valeur
-ROM ne les fixe. Voir *Cadence de la boucle de logique*.
+*Fait ROM, PRÉCISÉ 2026-09-05* : le **déclencheur** de saut est désassemblé,
+contrairement à ce que disait cette entrée. `fn_player_jump_trigger` (#21F0,
+`asm/code/doors_and_player_logic.asm:445-462`) exige la touche, un cooldown à
+zéro, l'absence du drapeau de saut, et un compteur `(ix+0B)` non négatif ;
+il pose alors ce drapeau (bit 3 de `+0x0C`) et `(ix+0B) = +8`. Deux de ces
+éléments sont maintenant portés parce que la transformation en dépend : le
+drapeau (`PlayerState.jumping`) et le cooldown (`transformCooldown`).
+
+Ce qui reste non tracé est la **courbe** : `fn_player_gravity_and_door_dispatch`
+(#2253) fait converger `(ix+0B)` vers 0 par pas de 1-2, et personne n'a
+reconstitué la hauteur ni la durée qui en résultent. `GRAVITY` et
+`JUMP_VELOCITY` restent donc des valeurs de réglage, en unités/seconde
+(`-300 u/s²`, `120 u/s`) converties par `TICK_HZ` : les seules grandeurs du
+portage réglées en temps réel, précisément parce qu'aucune valeur ROM ne les
+fixe encore. Voir *Cadence de la boucle de logique*.
 
 ### Mode de contrôle « rotation » non appliqué
 La structure est en place — le mode est un **pilote d'entrée**
@@ -129,78 +162,21 @@ Le cooldown de rotation de 2 ticks est déjà modélisé
 (`PlayerState.turnCooldown`) et restera inerte jusque-là, puisque le chemin
 directional le court-circuite dans l'original aussi.
 
-### Poses alternatives aléatoires — DÉSASSEMBLÉ 2026-09-05, écart désormais assumable
-Les slots 6/7 de chaque groupe de types (0x26/0x27, 0x2E/0x2F → `hero_up6`,
-`hero_up7`, `hero_up2`, `hero_up1`) sont des poses rares tirées au hasard par
-`fn_entity_materialize_pick_subtype` (#26C3) et tenues 8 frames.
+### Poses alternatives aléatoires
+Les codes 6/7 de chaque demi-jeu de la famille CORPS (0x26/0x27, 0x2E/0x2F →
+`hero_up6`, `hero_up7`, `hero_up2`, `hero_up1`) sont des poses rares, tirées
+par `fn_entity_materialize_pick_subtype` (#26C3) et tenues 8 frames. Pas
+implémentées.
 
-*Ce que le désassemblage a réglé.* Ces slots ne sont pas un choix arbitraire :
-ce sont les **codes libres** de la famille « corps ». L'encodage `base |
-(bit<<3) | phase` n'a que 6 phases, donc +6/+7 de chaque demi-jeu sont
-inatteignables par l'animation — et la routine les force explicitement
-(`(iy+off_type) & #F8 | #06`, puis `+#10`). Même règle que pour les familles
-de jambes, appliquée ici **à l'intérieur** de la famille au lieu de servir à
-loger un objet sans rapport. Voir `docs/METHODOLOGY.md` §25bis.
+*Fait ROM* : entièrement désassemblé. Ce ne sont pas des poses arbitraires
+mais les **codes libres** de la famille — l'encodage `base | (bit<<3) | phase`
+n'a que 6 phases, et la routine force explicitement les 3 bits bas à 6 ou 7
+(`(iy+off_type) & #F8 | #06`, puis `+#10`). Seuils : `var_pseudo_random_acc`
+`< 0x02` → pose 6, `>= 0xFE` → pose 7, soit ~0,8 % chacune. Voir
+`docs/METHODOLOGY.md` §25bis.
 
-*Seuils exacts* : `var_pseudo_random_acc` (#006D) lu tel quel, `< 0x02` →
-pose 6, `>= 0xFE` → pose 7, sinon le cas ordinaire. Soit **~0,8 % chacune**.
-
-*Écart à assumer, et il est irréductible.* La source de l'aléa est
-désassemblée et **non portable** : l'accumulateur est mélangé deux fois par
-tour, une fois par entité dispatchée (`acc += R`, le registre de
-rafraîchissement du Z80) et une fois par frame
-(`acc += mem[var_frame_counter] + bas + haut`, qui utilise la valeur du
-compteur de frames comme une **adresse** et lit l'octet qui s'y trouve). Ni
-le registre R ni le contenu mémoire à une adresse arbitraire n'ont
-d'équivalent dans le portage. La *cadence* et la *distribution* sont donc
-reproductibles fidèlement, la *séquence* ne l'est pas — n'importe quel
-générateur respectant les deux seuils est aussi fidèle qu'on peut l'être, et
-prétendre mieux serait faux.
-
-### Transformation jour/nuit (loup-garou) — DÉBLOCAGE 2026-09-05
-Pas encore implémenté, mais **plus rien ne bloque** : le désassemblage est
-complet, tous les nombres sont dans `docs/SYMBOLS.md`.
-
-*La contradiction est levée, et aucune des deux lectures n'était fausse.* La
-table de dispatch, décodée entrée par entrée depuis `extra/dump_ref.bin`
-(#0676+2×type), donne `fn_player_logic_night` (#20D0) sur **0x30-0x35 et
-0x38-0x3D**, et `fn_moving_block_logic` (#0F98/#0F93) sur **0x36/0x37**. La
-plage du joueur nocturne est trouée ; c'est la notation « 0x30-0x3D » qui
-était fautive, pas l'une des deux sources.
-
-*Raison structurelle, et elle se vérifie sur les trois familles de jambes* :
-l'encodage est `base | (bit<<3) | phase` avec 6 phases seulement, donc
-`base+6/+7/+E/+F` sont inatteignables par l'animation et ont tous été
-recyclés (0x16/0x17/0x1E/0x1F pour la base 0x10, 0x36/0x37/0x3E/0x3F pour
-0x30, 0x96/0x97/0x9E/0x9F pour 0x90). Douze codes libres, douze recyclés.
-Les plages nuit peuvent donc entrer dans `render/isoOffsets.ts` — **à
-condition d'y entrer trouées**.
-
-*Faits ROM pour l'implémentation* :
-- **Cycle** : `fn_hud_day_night_cycle` (#1C44) agit 1 frame sur 8 et avance
-  l'icône d'un pas ; 49 paliers de 0xB0 à 0xE1, soit **392 ticks par
-  demi-cycle**. En fin de cycle (#1CAF) : icône `XOR 1` (0x58 soleil ↔ 0x59
-  lune), et `var_transform_flag_and_saved_type` (0x0077) = 1, qui est la
-  **demande** de transformation.
-- **Compteur de jours** : incrémenté seulement au passage nuit→jour, en
-  **BCD** (`add a,#01 / daa`), et `cp #40` → fin de partie à 40 jours.
-- **Transformation** : `fn_player_transform_trigger` (#1BB0) sauvegarde le
-  type courant, pose 8 sous-étapes ; `fn_player_transform_tick` (#1BE1) en
-  consomme une 1 frame sur 4 → **32 ticks**, en tirant à chaque étape un type
-  parmi 0x5C-0x5F (jamais deux fois le même d'affilée) et en basculant bit6
-  de `flags` (tremblement).
-- **Complétion** (#1C24) : `type_final = sauvegardé XOR 0x20`, et l'entité
-  **compagnon** (slot suivant, `ix+0x1C`) reçoit `type_final + 0x10`. C'est ce
-  `+0x10` qui confirme le couplage jambes/corps : jambes 0x14 → corps 0x24 le
-  jour, 0x34 → 0x44 la nuit. Si bit5 du type final est posé (donc la nuit),
-  `proj_offset_y` est décrémenté de 1 — le loup-garou est dessiné une unité
-  plus haut.
-
-*Ce qui reste ouvert, et ce n'est pas bloquant* : le tirage pseudo-aléatoire
-des sous-étapes s'appuie sur `var_pseudo_random_acc` **et sur le registre `R`**
-(`ld a,r / ld c,a / add a,c`), qui n'a pas d'équivalent portable. C'est du
-cosmétique — l'ordre des 4 types transitoires — et il est admissible en stub,
-contrairement à la mécanique du cycle.
+*Rien ne bloque* : c'est du travail restant, pas une information manquante. La
+séquence exacte, elle, relèvera de *Séquences pseudo-aléatoires* ci-dessus.
 
 ### Comportements dynamiques des blocs — RÉVISÉ 2026-09-04
 
@@ -282,8 +258,8 @@ Les montants (0x02/0x03) sont traversables. Reste à traiter la **hauteur**
 de porte (ne pas pouvoir sauter par-dessus une porte basse).
 
 ### État de jeu
-Pas de mort au contact, pas de vies, pas d'objets ramassables, pas de cycle
-jour/nuit.
+Pas de mort au contact, pas de vies, pas d'objets ramassables. Le cycle
+jour/nuit et la transformation, eux, sont implémentés — voir plus haut.
 
 ---
 

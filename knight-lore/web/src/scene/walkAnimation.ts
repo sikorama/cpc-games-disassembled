@@ -36,12 +36,23 @@ export function createWalkAnimState(): WalkAnimState {
  * À l'arrêt on CONSERVE la phase courante -- le personnage gèle au milieu
  * de sa foulée. C'est le comportement de l'original : le cycle n'avance
  * que si le bit « avance » est posé (doors_and_player_logic.asm:478-480),
- * et il n'existe AUCUNE pose de repos dans la ROM. Les slots 6/7 de chaque
- * groupe (0x26/0x27, 0x2E/0x2F) ne sont pas des poses immobiles : ce sont
- * des poses alternatives rares tirées au hasard par
- * fn_entity_materialize_pick_subtype (#26C3) et tenues 8 frames -- pas
- * encore implémentées (dette). Les jambes n'ont même pas de slot 6/7 :
- * 0x16/0x17 sont la statue de crapaud et le tapis à clous.
+ * et il n'existe AUCUNE pose de repos dans la ROM.
+ *
+ * CE QUE DEVIENNENT LES CODES 6/7. N'ayant que 6 phases sur les 3 bits bas,
+ * l'encodage `base | (bit<<3) | phase` laisse quatre codes inatteignables par
+ * bloc de 16 : `base+6`, `base+7`, `base+E`, `base+F`. Le jeu les a tous
+ * recyclés, et pas de la même façon selon la famille -- ce ne sont donc PAS
+ * des poses de repos, dans un cas comme dans l'autre :
+ *
+ * - famille CORPS (0x26/0x27, 0x2E/0x2F) : des poses alternatives rares,
+ *   tirées au hasard par fn_entity_materialize_pick_subtype (#26C3, seuils
+ *   `<2` et `>=#FE`, soit ~0,8% chacune) et tenues 8 frames. Pas encore
+ *   implémentées (dette, voir web/DEVIATIONS.md) ;
+ * - famille JAMBES : des objets sans aucun rapport -- 0x16/0x17 sont la
+ *   statue de crapaud et le tapis à clous, 0x36/0x37 les blocs mobiles.
+ *
+ * Voir docs/METHODOLOGY.md §25bis : ces trous sont prévisibles, ils se
+ * déduisent de l'encodage avant même d'aller lire la table de dispatch.
  */
 export function advanceWalkAnim(state: WalkAnimState, moving: boolean): void {
   if (!moving) return;

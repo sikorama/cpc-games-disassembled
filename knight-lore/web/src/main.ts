@@ -14,7 +14,22 @@ import {
   updatePushables,
   type PushableBody,
 } from "./scene/pushables";
-import { createPlayerState, loadPlayerFrames, updatePlayer, playerDrawCalls, type PlayerState } from "./scene/player";
+import {
+  createPlayerState,
+  loadPlayerFrames,
+  updatePlayer,
+  playerDrawCalls,
+  armTransformCooldownAfterDoor,
+  type PlayerState,
+} from "./scene/player";
+import {
+  createDayNightState,
+  updateDayNight,
+  cancelPendingTransform,
+  dayCounterDecimal,
+  halfCycleProgress,
+  type DayNightState,
+} from "./game/dayNight";
 import { createGuardState, updateGuard, guardDrawCalls, type GuardState } from "./scene/guard";
 import { drawTopView } from "./debug/topView";
 import { TickAccumulator } from "./game/tick";
@@ -63,6 +78,11 @@ interface AppState {
    * fournissent leur obstacle à leur position courante -- voir syncObstacles(). */
   obstacles: Obstacle[];
   pushables: PushableBody[];
+  /** Horloge du jeu : cycle jour/nuit, compteur de jours, et demande de
+   * transformation du joueur. Volontairement HORS de la salle et hors du
+   * joueur -- c'est un état de partie, il survit aux changements de salle
+   * comme `var_day_night_flag` survit à fn_room_init. */
+  dayNight: DayNightState;
   input: KeyboardState;
   /** Chargement de salle en cours (franchissement ou sélecteur) : le
    * joueur est figé, pas de nouvelle détection de franchissement tant que
@@ -115,6 +135,7 @@ async function main() {
     guards,
     obstacles: buildObstacles(room.getEntities()),
     pushables: createPushables(room.getMovableEntities()),
+    dayNight: createDayNightState(),
     input: createKeyboardState(window),
     transitioning: false,
   };
@@ -160,6 +181,7 @@ async function main() {
     // replacé à l'arrêt, et le gel de phase (walkAnimation.ts) le laisserait
     // sinon figé au milieu d'une foulée d'une salle à l'autre.
     state.player.anim.phase = 0;
+    cancelPendingTransform(state.dayNight);
     rebuild();
   }
 
@@ -183,6 +205,15 @@ async function main() {
       state.pushables = createPushables(state.room.getMovableEntities());
       state.guards = await loadGuards(targetRoomId);
       repositionForEntry(state.player, crossing);
+      // Franchir une porte refuse la transformation pendant 3 ticks (`or #30`
+      // sur le cooldown, asm/code/doors_and_player_logic.asm:761-763). Armé
+      // ici parce que c'est ici que le portage fait ce que la ROM fait dans
+      // fn_player_door_transition.
+      armTransformCooldownAfterDoor(state.player);
+      // Une demande de transformation en attente est PERDUE en entrant dans
+      // une salle (fn_init_room_entities #29B4 remet #0077 à zéro). Le cycle,
+      // lui, continue -- seule la demande tombe.
+      cancelPendingTransform(state.dayNight);
       // Cadrage repris à zéro, comme changeRoom() -- "coupure franche"
       // entre salles, cohérent avec le jeu d'origine (un écran par salle).
       state.camera.zoom = INITIAL_ZOOM;
@@ -218,8 +249,14 @@ async function main() {
       // cache avec le décor.
       const obstacles = state.obstacles.concat(pushableObstacles(state.pushables));
 
+      // AVANT le joueur : c'est le cycle qui pose la demande de
+      // transformation, et le joueur la consomme dans le même tick s'il le
+      // peut. L'ordre inverse ajouterait un tick de latence à chaque
+      // basculement, invisible mais faux.
+      updateDayNight(state.dayNight);
+
       const intent = readIntent(state.controlMode, state.input);
-      updatePlayer(state.player, intent, obstacles);
+      updatePlayer(state.player, intent, obstacles, state.dayNight);
       for (const guard of state.guards) {
         updateGuard(guard, obstacles);
       }
@@ -290,6 +327,16 @@ function updateHud(state: AppState): void {
   document.getElementById("hud-player-vel")!.textContent =
     `${player.velX.toFixed(0)},${player.velY.toFixed(0)},${player.velZ.toFixed(0)}`;
   document.getElementById("hud-player-air")!.textContent = player.airborne ? "en l'air" : "au sol";
+
+  const dn = state.dayNight;
+  const phase = dn.phase === "day" ? "jour" : "nuit";
+  const progress = Math.round(halfCycleProgress(dn) * 100);
+  document.getElementById("hud-phase")!.textContent = player.transform
+    ? `transformation (${player.transform.stepsLeft})`
+    : `${phase} ${progress}%`;
+  document.getElementById("hud-days")!.textContent = dn.daysExhausted
+    ? `${dayCounterDecimal(dn)} (épuisé)`
+    : String(dayCounterDecimal(dn));
 }
 
 function setupControls(canvas: HTMLCanvasElement, state: AppState, rebuild: () => void) {
