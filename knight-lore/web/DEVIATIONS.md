@@ -228,6 +228,11 @@ de porte (ne pas pouvoir sauter par-dessus une porte basse).
 Pas de mort au contact, pas de vies, pas d'objets ramassables. Le cycle
 jour/nuit et la transformation, eux, sont implémentés — voir plus haut.
 
+*Conséquence visible* : les pièges qui bougent bougent pour de bon mais ne
+font rien. Une boule à pics (0x3F) tombe fidèlement — armement aléatoire,
+verrou par salle, chute accélérée — et traverse le joueur sans effet. C'est
+un manque de la mécanique de dégâts, pas un défaut du piège.
+
 ---
 
 ## Écarts retirés après vérification
