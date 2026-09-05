@@ -197,6 +197,10 @@ dormant (0x8F). Visuellement identiques, ce sont des objets ROM
 différents : classer leur solidité par sprite serait une erreur, il faut
 classer par type.
 
+Attention, cette famille visuelle recouvre **trois mécaniques sans rapport** :
+solidité inerte, [[Poussée]] subie, et [[Mouvement autonome]]. Le sprite ne
+dit rien de laquelle s'applique.
+
 **Classification cartographique vs solidité physique** (résolu
 2026-09-04) : « décor » est un concept **cartographique** — quoi masquer
 pour produire une carte lisible — et n'est PAS une source de vérité
@@ -211,6 +215,32 @@ Règle générale qui en découle : un outil d'extraction exporte des **faits
 observés** (type, position, bbox), jamais une politique de gameplay — une
 politique expédiée depuis là devient invisible et se fait réutiliser comme
 vérité par un consommateur que personne n'avait prévu.
+
+## Poussée
+Transmission du vecteur de déplacement d'une entité en mouvement à l'entité
+qu'elle vient de heurter. Ce n'est **pas** une capacité du joueur ni une
+propriété de type : c'est un bit porté par l'**instance** heurtée (bit 2 de
+son octet `flags`), et le scan de collision par axe partagé par toutes les
+entités mobiles fait le reste. Deux conséquences qui gouvernent le portage :
+tout ce qui bouge pousse (le garde comme le joueur, confirmé en jeu), et rien
+de ce qui pousse n'a besoin de connaître la liste des objets poussables.
+
+Le pousseur est arrêté par ce qu'il pousse **dans le même tick** et ne le suit
+qu'au tick suivant : l'objet part d'un cran avant qu'on ne le rattrape. Ce
+retard est le ressenti d'origine, pas une latence.
+
+À distinguer de la **politique de vecteur**, propre à la routine de logique de
+chaque type poussé : garder le vecteur reçu (l'objet continue seul après la
+poussée), l'effacer après l'avoir appliqué (l'objet s'arrête net dès la fin du
+contact), ou l'effacer avant (l'objet ne bouge jamais). Les trois existent, et
+la différence tient à une seule instruction de place.
+
+## Mouvement autonome
+Déplacement qu'une entité s'impose elle-même, indépendamment de tout contact —
+à ne pas confondre avec la [[Poussée]], qui est subie. Plusieurs types
+visuellement identiques au petit bloc en relèvent (bloc mobile, cube qui
+s'enfonce), et c'est ce qui les distingue du bloc poussable : ils ne portent
+PAS le bit de poussée.
 
 ## Table de remap (pièces asymétriques)
 Correspondance `(type de tuile, flip) → (type de tuile, flip)` nécessaire

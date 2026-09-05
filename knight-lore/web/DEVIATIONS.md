@@ -42,8 +42,8 @@ puis sur le nouveau, produisant une trajectoire diagonale sur 2 frames.
 C'est un transitoire de rotation, pas une direction tenue — ça ne couvre
 pas l'écart ci-dessus.
 
-### Cadence de la boucle de logique (50 Hz)
-Le portage tourne à pas fixe, 50 ticks/seconde (`web/src/game/tick.ts`).
+### Cadence de la boucle de logique (25 Hz)
+Le portage tourne à pas fixe, 25 ticks/seconde (`web/src/game/tick.ts`).
 
 *Fait ROM* : **il n'y en a pas, et c'est vérifié**. `fn_main_loop` (#05AE) est
 une boucle libre : aucun `HALT`, aucune lecture du port PPI B, aucune
@@ -58,8 +58,22 @@ frames légères sans accélérer les lourdes.
 comportement réel mais une contrainte matérielle, pas une intention de game
 design — décision de ne pas le reproduire. La cadence choisie est le seul
 écart du portage dont la case « fait de référence » dise « le jeu n'en a
-pas » plutôt qu'une adresse. Une seule constante à changer (`TICK_HZ`) si le
-jeu paraît trop rapide.
+pas » plutôt qu'une adresse.
+
+*Réglage* : 50 Hz au passage au pas fixe, ramené à **25 Hz le 2026-09-05**, le
+personnage et ses animations étant jugés trop rapides. Toutes les vitesses
+tirées de la ROM sont exprimées par TICK (pas du joueur ±3, pas du garde ±2,
+une phase de marche par tick de déplacement) : la cadence les gouverne donc
+toutes ensemble, dans le même rapport.
+
+*Piège à ne pas rouvrir* : « une seule constante à changer » n'est vrai que
+parce que la gravité et la vitesse de saut sont **dérivées** de `TICK_HZ`
+(`scene/player.ts`) et non écrites en dur. Ce sont les deux seules grandeurs
+réglées en temps réel et non par tick ; laissées telles quelles, le passage de
+50 à 25 Hz aurait **doublé la hauteur de saut** — or cette hauteur est du
+gameplay, il faut pouvoir monter sur un bloc à `+0x0C`. La formule
+`V²/(2A)` étant indépendante de la cadence, la hauteur et la durée du saut
+restent identiques à n'importe quelle fréquence.
 
 ### Mode de contrôle découplé du périphérique
 Le portage propose (à terme) les deux modes quel que soit le périphérique.
@@ -101,8 +115,10 @@ Provisoire, à résorber. Ordre indicatif de traitement.
 `GRAVITY` et `JUMP_VELOCITY` (`scene/player.ts`) sont des valeurs de réglage.
 
 *Fait ROM* : **pas encore désassemblé** — la logique de saut n'a pas été
-tracée. Les valeurs actuelles sont les anciennes constantes en unités/seconde
-converties à 50 Hz, pour que le passage au pas fixe ne change pas le ressenti.
+tracée. Les valeurs sont exprimées en unités/seconde (`-300 u/s²`, `120 u/s`)
+et converties en unités/tick à partir de `TICK_HZ` : ce sont les seules
+grandeurs du portage réglées en temps réel, précisément parce qu'aucune valeur
+ROM ne les fixe. Voir *Cadence de la boucle de logique*.
 
 ### Mode de contrôle « rotation » non appliqué
 La structure est en place — le mode est un **pilote d'entrée**
@@ -134,13 +150,74 @@ comme des blocs mobiles partageant le sprite du petit bloc 0x59DB
 peut pas être les deux — une des deux lectures est fausse. Les plages nuit
 sont donc volontairement absentes de `render/isoOffsets.ts`.
 
-### Comportements dynamiques des blocs
-Bloc mobile (0x36/0x37), poussable (0x3E), cube qui s'enfonce (0x5B), bloc
-dormant (0x8F), table poussable (0x54), coffre glissant (0x55) sont traités
-comme des blocs statiques solides (`physics/solidTypes.ts`). Leur logique
-est désassemblée (`fn_pushable_block_logic` #1D53,
-`fn_pushable_table_logic` #1D71, `fn_sliding_chest_logic` #1D66) — c'est
-l'implémentation qui manque, pas le fait.
+### Comportements dynamiques des blocs — RÉVISÉ 2026-09-04
+
+La poussée est implémentée (`scene/pushables.ts`) : table 0x54, coffre 0x55
+et bloc 0x3E sont des corps mobiles vivants. Ce qui reste ci-dessous est ce
+que cette entrée regroupait à tort.
+
+*Fait ROM qui a redécoupé l'entrée* : « poussable » n'est PAS un type, c'est
+le **bit 2 de `flags`** (+0x07) de l'instance. `fn_entity_collide_axis_x/_y`
+(#244C/#249B, `asm/code/doors_and_player_logic.asm:895-990`) recopient le
+vecteur en attente du mobile dans celui de l'entité heurtée dès que ce bit y
+est posé. Vérifié aussi sur les données : dans les 128 salles du manifest, le
+bit n'est posé que sur 0x3E, 0x54, 0x55, 0x60-0x67 et les personnages — et
+sur **aucune** instance de 0x36, 0x37, 0x5B, 0x8F, 0x07, 0x16.
+
+Ce qui reste, et n'a rien à voir avec la poussée :
+
+- **0x36/0x37, blocs mobiles** — mouvement autonome, pas une réaction au
+  joueur. `fn_moving_block_logic` (#0F98) oscille en X : cible
+  `f(var_frame_counter + bit de l'adresse du slot)` repliée par bit4,
+  comparée à `(grid_x + 8) & 0x0F`, pas de ±1. Deux constantes sont écrites
+  **en code auto-modifiant** (#0FBF/#0FD0) et diffèrent entre 0x36 et 0x37 —
+  à relire avant d'implémenter. Traités comme des blocs statiques solides
+  en attendant.
+- **0x5B, cube qui s'enfonce** — *pas encore désassemblé* pour l'essentiel :
+  `fn_sinking_cube_logic` (#0F67) consomme un déclencheur (bit3 de
+  `state_flags_2`) mais **le mécanisme de la descente en `grid_z` n'a pas été
+  trouvé** (`docs/SYMBOLS.md`, piste ouverte explicite). Bloquant : c'est une
+  mécanique de jeu, on finit le désassemblage avant d'écrire le code.
+
+**Retiré de la liste** : *0x8F, bloc dormant*. Ce n'était pas un écart.
+`fn_dormant_block_transform` (#0F84) le laisse indiscernable d'un bloc
+statique tant que le bit3 de `state_flags_2` n'est pas posé ; une fois
+déclenché il devient 0xB8 puis 0xB9, dont la logique retombe en idle statique
+(`docs/SYMBOLS.md` 0xB8). Un bloc solide immobile est donc la simulation
+**fidèle** de 0x8F.
+
+### Bloc poussable 0x3E immobile
+Le portage lui donne la politique de vecteur de sa routine ROM, qui le rend
+immobile. Poussé, il reçoit bien le vecteur et ne bouge pas.
+
+*Fait ROM* : `fn_pushable_block_logic` (#1D53) fait `CALL #22A5` (remise à
+zéro du vecteur en attente) **avant** le `RST 10` qui l'applique — l'inverse
+de `fn_pushable_table_logic` (#1D71), qui applique puis efface. Octets relus
+directement dans `extra/dump_ref.bin` pour écarter une erreur de
+transcription : `1D53: CD 8F 1D CD A5 22 D7 …`. Et le joueur est le slot 0
+d'une table dispatchée en ordre croissant (`fn_main_loop` #05AE,
+`asm/code/low_ram_and_boot.asm:224-252`), donc la poussée est écrite dans le
+bloc avant son propre tick, qui l'efface aussitôt.
+
+*Statut* : ce n'est pas une décision du portage, c'est une conséquence du
+code encodé tel quel. La note d'origine
+(`notes/2026-08-07-room-bb-diamond-and-pushable-block.md`) lisait ce `CALL
+#22A5` comme « exactement le même appel que 0x54 » sans relever qu'il tombe
+de l'autre côté du `RST 10`, et aucune poussée de 0x3E n'y a jamais été
+observée en jeu — seulement le sprite. **À trancher par trace live** :
+placer le joueur contre un 0x3E (salle 0xBB, 0x08, 0x58 ou 0xC7) et regarder
+si `grid_x`/`grid_y` du bloc bougent. Si oui, une seule valeur d'énumération
+change dans `physics/solidTypes.ts`.
+
+### Corps poussables sans gravité
+Table, coffre et bloc gardent leur `grid_z` de manifest ; poussés dans le
+vide, ils ne tombent pas.
+
+*Fait ROM* : **pas encore désassemblé** pour ces types. `RST 10` fait bien un
+`dec (ix+0B)` avant de résoudre, mais aucune chute n'a été tracée pour eux —
+et les données vont dans l'autre sens : plusieurs instances sont capturées
+stables à `0x8C` ou `0x98` sans rien en dessous (salles 0x08, 0x40, 0x58).
+Les faire tomber serait inventer une mécanique.
 
 ### Contrainte physique des portes
 Les montants (0x02/0x03) sont traversables. Reste à traiter la **hauteur**

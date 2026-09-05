@@ -6,17 +6,69 @@ import { getProjOffset } from "../render/isoOffsets";
 import { loadRoomEntities } from "../data/roomManifest";
 import { loadSpriteIndex, type SpriteIndex } from "../data/spriteManifest";
 import type { RoomEntity } from "../data/types";
+import { pushPolicyFor } from "../physics/solidTypes";
 
 /** Entité résolue (texture chargée), indépendante de l'angle de vue --
  * séparée des draw calls pour que changer d'angle soit un simple recalcul
  * géométrique, sans re-résoudre ni recharger la moindre texture. */
-interface ResolvedEntity {
+export interface ResolvedEntity {
   entity: RoomEntity;
   texture: WebGLTexture;
   width: number;
   height: number;
   hflipState: boolean;
   isWall: boolean;
+  /** Corps mobile (table/coffre/bloc poussable) : sorti du rendu STATIQUE et
+   * redessiné chaque frame à sa position courante par scene/pushables.ts. */
+  isMovable: boolean;
+}
+
+/**
+ * Draw call d'une entité de décor à une position de grille DONNÉE plutôt qu'à
+ * celle du manifest -- unique source de vérité de la formule (projection,
+ * offset de calibration, miroir effectif, clé de tri).
+ *
+ * Elle prend la position en paramètre précisément pour qu'un corps mobile
+ * (scene/pushables.ts) n'ait pas à en recopier une variante : deux copies de
+ * cette formule dériveraient, et l'écart ne se verrait que sur l'objet en
+ * mouvement, c'est-à-dire au pire endroit.
+ */
+export function entityDrawCall(
+  resolved: ResolvedEntity,
+  gridX: number,
+  gridY: number,
+  gridZ: number,
+  view: ViewAngle,
+): SpriteDrawCall {
+  const { entity, texture, width, height, hflipState } = resolved;
+  // render/isoOffsets.ts : calibration par type (proj_offset_x/y), ajoutée
+  // telle quelle -- MÊME espace et MÊME signe que dans la formule originale
+  // (asm/code/rendering_pipeline.asm:301/309).
+  const rawProjOffset = getProjOffset(entity.type, entity.flags) ?? [0, 0];
+  const projOffset: [number, number] = [
+    rawProjOffset[0],
+    // Compense l'écart d'un demi-pixel de la matrice caméra (linéaire) face
+    // au `srl a` du Z80 -- voir classicYRoundingCorrection.
+    rawProjOffset[1] + classicYRoundingCorrection(gridX, gridY, view),
+  ];
+  const [rgx, rgy] = rotateGrid(gridX, gridY, view);
+  return {
+    texture,
+    worldPos: [rgx, gridZ, rgy],
+    size: [width, height],
+    projOffset,
+    // Le sprite est MUTÉ EN PLACE dans le jeu original
+    // (docs/RENDERING_PIPELINE.md §6) : le PNG capturé est un INSTANTANÉ de
+    // ce bit, pas un état neutre -- le miroir à appliquer est le XOR de
+    // l'état capturé et du bit6 de l'entité, pas l'un des deux seul.
+    // Troisième terme : un quart de tour de caméra équivaut à un miroir
+    // horizontal pour un objet à symétrie miroir (voir viewNeedsFlip).
+    flipX: hflipState !== ((entity.flags & 0x40) !== 0) !== viewNeedsFlip(view),
+    // Peintre : profondeur dérivée géométriquement (produit vectoriel des
+    // deux axes écran), et recalculée sur les coordonnées TOURNÉES -- c'est
+    // ce qui fait que le tri reste juste aux 4 angles sans rien réécrire.
+    sortKey: -rgx + rgy - gridZ,
+  };
 }
 
 export interface RoomView {
@@ -35,6 +87,13 @@ export class LoadedRoom {
    * manifest -- voir main.ts. */
   getEntities(): RoomEntity[] {
     return this.entities.map((e) => e.entity);
+  }
+
+  /** Entités résolues des corps mobiles (table/coffre/bloc poussable) --
+   * sprite déjà chargé, pour que scene/pushables.ts les redessine à leur
+   * position courante sans repasser par le SpriteIndex. */
+  getMovableEntities(): ResolvedEntity[] {
+    return this.entities.filter((e) => e.isMovable);
   }
 
   /**
@@ -57,48 +116,26 @@ export class LoadedRoom {
     let minY = Infinity;
     let maxY = -Infinity;
 
-    for (const { entity, texture, width, height, hflipState, isWall } of this.entities) {
+    for (const resolved of this.entities) {
+      const { entity, width, height, isWall, isMovable } = resolved;
       if (hideWalls && isWall) continue;
 
-      const projected = projectClassic(entity.gridX, entity.gridY, entity.gridZ, view);
-      // render/isoOffsets.ts : calibration par type (proj_offset_x/y), ajoutée
-      // telle quelle -- MÊME espace et MÊME signe que dans la formule originale
-      // (asm/code/rendering_pipeline.asm:301/309), maintenant que le pipeline
-      // travaille bien en espace écran du jeu (+Y vers le bas).
-      const rawProjOffset = getProjOffset(entity.type, entity.flags) ?? [0, 0];
-      const projOffset: [number, number] = [
-        rawProjOffset[0],
-        // Compense l'écart d'un demi-pixel de la matrice caméra (linéaire) face
-        // au `srl a` du Z80 -- voir classicYRoundingCorrection.
-        rawProjOffset[1] + classicYRoundingCorrection(entity.gridX, entity.gridY, view),
-      ];
+      const call = entityDrawCall(resolved, entity.gridX, entity.gridY, entity.gridZ, view);
 
+      // Le CADRAGE tient compte des corps mobiles à leur position de départ
+      // (sinon la caméra sauterait quand on pousse une table hors du cadre
+      // initial), mais leur DRAW CALL vient de scene/pushables.ts, à leur
+      // position courante.
+      const projected = projectClassic(entity.gridX, entity.gridY, entity.gridZ, view);
       // Ancre = coin BAS-gauche dans l'espace projeté (+Y vers le haut) : le
       // sprite s'étend vers la droite et vers le haut (voir gl/spriteBatch.ts).
-      minX = Math.min(minX, projected.x + projOffset[0]);
-      maxX = Math.max(maxX, projected.x + projOffset[0] + width);
-      minY = Math.min(minY, projected.y + projOffset[1]);
-      maxY = Math.max(maxY, projected.y + projOffset[1] + height);
+      minX = Math.min(minX, projected.x + call.projOffset[0]);
+      maxX = Math.max(maxX, projected.x + call.projOffset[0] + width);
+      minY = Math.min(minY, projected.y + call.projOffset[1]);
+      maxY = Math.max(maxY, projected.y + call.projOffset[1] + height);
 
-      const [rgx, rgy] = rotateGrid(entity.gridX, entity.gridY, view);
-
-      drawCalls.push({
-        texture,
-        worldPos: [rgx, entity.gridZ, rgy],
-        size: [width, height],
-        projOffset,
-        // Le sprite est MUTÉ EN PLACE dans le jeu original
-        // (docs/RENDERING_PIPELINE.md §6) : le PNG capturé est un INSTANTANÉ de
-        // ce bit, pas un état neutre -- le miroir à appliquer est le XOR de
-        // l'état capturé et du bit6 de l'entité, pas l'un des deux seul.
-        // Troisième terme : un quart de tour de caméra équivaut à un miroir
-        // horizontal pour un objet à symétrie miroir (voir viewNeedsFlip).
-        flipX: hflipState !== ((entity.flags & 0x40) !== 0) !== viewNeedsFlip(view),
-        // Peintre : profondeur dérivée géométriquement (produit vectoriel des
-        // deux axes écran), et recalculée sur les coordonnées TOURNÉES -- c'est
-        // ce qui fait que le tri reste juste aux 4 angles sans rien réécrire.
-        sortKey: -rgx + rgy - entity.gridZ,
-      });
+      if (isMovable) continue;
+      drawCalls.push(call);
     }
 
     const margin = 20;
@@ -175,6 +212,7 @@ export async function loadRoom(gl: WebGL2RenderingContext, roomId: number): Prom
       height: sprite.height,
       hflipState: sprite.hflipState,
       isWall: isWallType(entity.type),
+      isMovable: pushPolicyFor(entity.type, entity.flags) !== null,
     });
   }
 

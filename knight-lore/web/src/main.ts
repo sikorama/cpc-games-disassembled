@@ -7,6 +7,13 @@ import { loadSpriteIndex } from "./data/spriteManifest";
 import { loadRoom, type LoadedRoom, type RoomView } from "./scene/room";
 import { createKeyboardState, type KeyboardState } from "./input/keyboard";
 import { buildObstacles, type Obstacle } from "./physics/obstacles";
+import {
+  createPushables,
+  pushableDrawCalls,
+  pushableObstacles,
+  updatePushables,
+  type PushableBody,
+} from "./scene/pushables";
 import { createPlayerState, loadPlayerFrames, updatePlayer, playerDrawCalls, type PlayerState } from "./scene/player";
 import { createGuardState, updateGuard, guardDrawCalls, type GuardState } from "./scene/guard";
 import { drawTopView } from "./debug/topView";
@@ -52,7 +59,10 @@ interface AppState {
   camera: Camera;
   player: PlayerState;
   guards: GuardState[];
+  /** Décor INERTE seulement. Les corps mobiles sont dans `pushables` et
+   * fournissent leur obstacle à leur position courante -- voir syncObstacles(). */
   obstacles: Obstacle[];
+  pushables: PushableBody[];
   input: KeyboardState;
   /** Chargement de salle en cours (franchissement ou sélecteur) : le
    * joueur est figé, pas de nouvelle détection de franchissement tant que
@@ -104,6 +114,7 @@ async function main() {
     player: createPlayerState(playerFrames, PLAYER_SPAWN),
     guards,
     obstacles: buildObstacles(room.getEntities()),
+    pushables: createPushables(room.getMovableEntities()),
     input: createKeyboardState(window),
     transitioning: false,
   };
@@ -133,6 +144,7 @@ async function main() {
     // téléportation via le sélecteur, pas un franchissement en marchant
     // (voir transitionRoom() pour ce cas).
     state.obstacles = buildObstacles(state.room.getEntities());
+    state.pushables = createPushables(state.room.getMovableEntities());
     state.guards = await loadGuards(roomId);
     state.player.gridX = PLAYER_SPAWN.gridX;
     state.player.gridY = PLAYER_SPAWN.gridY;
@@ -163,6 +175,12 @@ async function main() {
       state.room = await loadRoom(gl, targetRoomId);
       state.roomId = targetRoomId;
       state.obstacles = buildObstacles(state.room.getEntities());
+      // Les corps mobiles repartent de leur position de manifest à chaque
+      // (re)chargement : la ROM ne conserve pas l'état d'une salle qu'on
+      // quitte non plus -- ses 40 slots sont réécrits depuis les données de
+      // la nouvelle salle (fn_room_init). Un coffre poussé n'est donc pas un
+      // état persistant à sauvegarder.
+      state.pushables = createPushables(state.room.getMovableEntities());
       state.guards = await loadGuards(targetRoomId);
       repositionForEntry(state.player, crossing);
       // Cadrage repris à zéro, comme changeRoom() -- "coupure franche"
@@ -195,11 +213,23 @@ async function main() {
 
     const ticks = ticker.take(dt);
     for (let i = 0; i < ticks && !state.transitioning; i++) {
+      // Les corps mobiles sont des obstacles À LEUR POSITION COURANTE : la
+      // liste est reconstruite à chaque tick, elle ne peut pas être mise en
+      // cache avec le décor.
+      const obstacles = state.obstacles.concat(pushableObstacles(state.pushables));
+
       const intent = readIntent(state.controlMode, state.input);
-      updatePlayer(state.player, intent, state.obstacles);
+      updatePlayer(state.player, intent, obstacles);
       for (const guard of state.guards) {
-        updateGuard(guard, state.obstacles);
+        updateGuard(guard, obstacles);
       }
+      // APRÈS le joueur et les gardes, jamais avant : le joueur est le slot 0
+      // de la table d'entités et fn_main_loop dispatche en ordre croissant
+      // (asm/code/low_ram_and_boot.asm:224-252). Les poussées de ce tick sont
+      // donc déjà écrites quand les corps jouent le leur -- et c'est
+      // précisément cet ordre qui décide du comportement du bloc 0x3E (voir
+      // physics/solidTypes.ts).
+      updatePushables(state.pushables, state.obstacles);
 
       const crossing = detectEdgeCrossing(state.player);
       if (crossing) {
@@ -232,9 +262,16 @@ async function main() {
       ...state.built.drawCalls,
       ...playerDrawCalls(state.player, state.view),
       ...state.guards.flatMap((guard) => guardDrawCalls(guard, state.view)),
+      ...pushableDrawCalls(state.pushables, state.view),
     ];
     renderer.draw(state.camera.getView(), state.camera.getProjection(aspect), drawCalls);
-    drawTopView(topViewCtx, topViewCanvas.width, state.obstacles, state.player, state.guards);
+    drawTopView(
+      topViewCtx,
+      topViewCanvas.width,
+      state.obstacles.concat(pushableObstacles(state.pushables)),
+      state.player,
+      state.guards,
+    );
     updateHud(state);
     requestAnimationFrame(frame);
   }
