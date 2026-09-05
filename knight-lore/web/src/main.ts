@@ -52,7 +52,22 @@ import {
 } from "./scene/player";
 import { startNewGame, type NewGame } from "./game/newGame";
 import { objectsInRoom } from "./game/objectCatalog";
-import { loadRoomObjects, objectDrawCalls, type RoomObject } from "./scene/objects";
+import {
+  loadObjectSprites,
+  createRoomObjects,
+  objectDrawCalls,
+  type RoomObject,
+  type ObjectSprites,
+} from "./scene/objects";
+import {
+  createInventoryState,
+  useAndRotate,
+  isGraspable,
+  displayedSlots,
+  heldObject,
+  objectName,
+  type InventoryState,
+} from "./game/inventory";
 import {
   createDayNightState,
   updateDayNight,
@@ -64,7 +79,7 @@ import {
 import { createGuardState, updateGuard, guardDrawCalls, guardBox, type GuardState } from "./scene/guard";
 import { drawTopView } from "./debug/topView";
 import { TickAccumulator } from "./game/tick";
-import { readIntent, type ControlMode } from "./input/controlMode";
+import { readIntent, type ControlMode, type MoveIntent } from "./input/controlMode";
 import {
   detectEdgeCrossing,
   neighborRoomId,
@@ -146,6 +161,12 @@ interface AppState {
   /** Objets à ramasser présents dans la salle courante, tirés du CATALOGUE et
    * non du manifest (voir scene/objects.ts). */
   roomObjects: RoomObject[];
+  /** Les 8 sprites d'objets, chargés une fois -- utiliser un objet en repose un
+   * autre à sa place, dans un tick de logique, donc pas le temps d'un fetch. */
+  objectSprites: ObjectSprites;
+  /** Pile de 4 enregistrements : l'objet en main plus les 3 emplacements du
+   * HUD (game/inventory.ts). */
+  inventory: InventoryState;
   input: KeyboardState;
   /** Chargement de salle en cours (franchissement ou sélecteur) : le
    * joueur est figé, pas de nouvelle détection de franchissement tant que
@@ -191,12 +212,9 @@ async function main() {
   const built = room.build(0, false);
   const playerSpriteIndex = await loadSpriteIndex();
   const playerFrames = await loadPlayerFrames(gl, playerSpriteIndex);
+  const objectSprites = await loadObjectSprites(gl, playerSpriteIndex);
   const guards = await loadGuards(game.startRoom);
-  const startObjects = await loadRoomObjects(
-    gl,
-    playerSpriteIndex,
-    objectsInRoom(game.catalog, game.startRoom),
-  );
+  const startObjects = createRoomObjects(objectsInRoom(game.catalog, game.startRoom));
   const state: AppState = {
     controlMode: "directional",
     room,
@@ -219,6 +237,8 @@ async function main() {
     checkpoint: { ...PLAYER_SPAWN },
     deathPhase: null,
     roomObjects: startObjects,
+    objectSprites,
+    inventory: createInventoryState(),
     input: createKeyboardState(window),
     transitioning: false,
   };
@@ -252,11 +272,7 @@ async function main() {
     state.spikeBalls = createSpikeBalls(state.room.getSpikeBalls());
     state.blocks = createAutonomousBlocks(state.room.getAutonomousBlocks());
     state.guards = await loadGuards(roomId);
-    state.roomObjects = await loadRoomObjects(
-      gl,
-      await loadSpriteIndex(),
-      objectsInRoom(state.game.catalog, roomId),
-    );
+    state.roomObjects = createRoomObjects(objectsInRoom(state.game.catalog, roomId));
     state.player.gridX = PLAYER_SPAWN.gridX;
     state.player.gridY = PLAYER_SPAWN.gridY;
     state.player.gridZ = PLAYER_SPAWN.gridZ;
@@ -300,11 +316,7 @@ async function main() {
       state.spikeBalls = createSpikeBalls(state.room.getSpikeBalls());
       state.blocks = createAutonomousBlocks(state.room.getAutonomousBlocks());
       state.guards = await loadGuards(targetRoomId);
-      state.roomObjects = await loadRoomObjects(
-        gl,
-        await loadSpriteIndex(),
-        objectsInRoom(state.game.catalog, targetRoomId),
-      );
+      state.roomObjects = createRoomObjects(objectsInRoom(state.game.catalog, targetRoomId));
       // La hauteur d'arrivée vient du montant d'en face, pas d'une constante :
       // une porte d'étage dépose le joueur à l'étage.
       const perp = crossing.axis === "x" ? state.player.gridY : state.player.gridX;
@@ -381,6 +393,9 @@ async function main() {
       const bounds = boundsForRoom(state.roomId);
 
       const intent = readIntent(state.controlMode, state.input);
+      // AVANT updatePlayer, comme la ROM place fn_player_use_held_object avant
+      // fn_player_jump_trigger : les deux boutons peuvent agir dans le même tick.
+      useHeldObject(state, intent);
       updatePlayer(state.player, intent, obstacles, state.dayNight);
       for (const guard of state.guards) {
         updateGuard(guard, obstacles, bounds);
@@ -467,7 +482,7 @@ async function main() {
       ...playerDrawCalls(state.player, state.view),
       ...state.guards.flatMap((guard) => guardDrawCalls(guard, state.view)),
       ...pushableDrawCalls(state.pushables, state.view),
-      ...objectDrawCalls(state.roomObjects, state.view),
+      ...objectDrawCalls(state.roomObjects, state.objectSprites, state.view),
       ...spikeBallDrawCalls(state.spikeBalls, state.view),
       ...autonomousBlockDrawCalls(state.blocks, state.view),
     ];
@@ -483,6 +498,99 @@ async function main() {
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+}
+
+/**
+ * Portée de préhension : la ROM agrandit temporairement la bbox du joueur de
+ * +4 en largeur, hauteur ET profondeur avant de balayer les objets
+ * (`fn_player_use_held_object` #18AA), puis la restaure. Ce n'est donc pas un
+ * contact : on attrape ce qui est À CÔTÉ, pas ce qu'on touche.
+ */
+const GRASP_REACH = 4;
+
+/** Demi-étendue d'un objet posé, pour le test de portée. */
+const OBJECT_HALF_EXTENT = 8;
+
+function objectBox(o: RoomObject) {
+  const { gridX, gridY, gridZ } = o.placed;
+  return {
+    minX: gridX - OBJECT_HALF_EXTENT,
+    maxX: gridX + OBJECT_HALF_EXTENT,
+    minY: gridY - OBJECT_HALF_EXTENT,
+    maxY: gridY + OBJECT_HALF_EXTENT,
+    minZ: gridZ,
+    maxZ: gridZ + OBJECT_HALF_EXTENT,
+  };
+}
+
+/**
+ * L'UNIQUE action du jeu sur les objets : prendre celui qui est à portée,
+ * décaler l'inventaire d'un cran, et poser celui qui en sort.
+ *
+ * Il n'y a ni ramassage par contact (le contact POUSSE, les objets portant le
+ * bit poussable), ni bouton pour lâcher, ni usage d'objet. Un seul geste, qui
+ * fait les trois.
+ *
+ * CONDITIONS, reprises de #18AA dans l'ordre : être dans le champ, ne pas être
+ * en train de sauter (`bit 3`), et être posé au sol (`bit 2`). Appelée AVANT
+ * updatePlayer, comme la ROM appelle fn_player_use_held_object avant
+ * fn_player_jump_trigger -- c'est ce qui permet de ramasser et sauter dans le
+ * même tick.
+ */
+function useHeldObject(state: AppState, intent: MoveIntent): void {
+  if (!intent.use) return;
+  const player = state.player;
+  if (player.materialize || player.transform) return;
+  if (player.jumping || player.airborne) return;
+
+  const box = playerBox(player);
+  const reach = {
+    minX: box.minX - GRASP_REACH,
+    maxX: box.maxX + GRASP_REACH,
+    minY: box.minY - GRASP_REACH,
+    maxY: box.maxY + GRASP_REACH,
+    minZ: box.minZ - GRASP_REACH,
+    maxZ: box.maxZ + GRASP_REACH,
+  };
+
+  // Seuls 0x60-0x66 : la vie bonus 0x67 n'est pas préhensible (`sub #60 / cp #07`).
+  const index = state.roomObjects.findIndex(
+    (o) => isGraspable(o.placed.type) && boxesOverlap(reach, objectBox(o)),
+  );
+  if (index < 0) return;
+
+  const target = state.roomObjects[index]!;
+  const evicted = useAndRotate(state.inventory, {
+    type: target.placed.type,
+    flags: 0,
+    catalogSlot: target.placed.catalogSlot,
+  });
+
+  // L'ENTRÉE DE CATALOGUE DE L'OBJET PRIS EST INVALIDÉE. La ROM écrit un zéro
+  // à travers le pointeur qu'elle vient de lire (`ld (de),a`), avant même de
+  // toucher à l'inventaire. Sans ça le portage recréerait l'objet depuis le
+  // catalogue à chaque retour dans la salle : on pourrait en récolter à
+  // l'infini en faisant l'aller-retour par une porte.
+  state.game.catalog = state.game.catalog.filter((p) => p.catalogSlot !== target.placed.catalogSlot);
+
+  if (evicted) {
+    // L'objet chassé de l'inventaire est POSÉ, et précisément à la place de
+    // celui qu'on vient de prendre : la ROM écrit son type dans le slot
+    // d'entité qu'elle est en train de libérer, un seul slot servant aux deux.
+    target.placed.type = evicted.type;
+    // Il reprend SON propre emplacement de catalogue, celui qu'il traînait
+    // depuis son ramassage -- c'est à ça que sert le pointeur conservé dans
+    // l'enregistrement d'inventaire. `fn_object_catalog_writeback` (#1E67)
+    // resynchronisera sa position en quittant la salle, donc il persiste là où
+    // on l'a laissé.
+    if (evicted.catalogSlot !== null) {
+      target.placed.catalogSlot = evicted.catalogSlot;
+      state.game.catalog.push({ ...target.placed });
+    }
+  } else {
+    // Rien ne sort : la salle perd simplement son objet.
+    state.roomObjects.splice(index, 1);
+  }
 }
 
 /**
@@ -587,6 +695,12 @@ function updateHud(state: AppState): void {
     : String(livesRemaining(state.lives));
   document.getElementById("hud-seed")!.textContent =
     `${state.game.seed.toString(16)} (départ 0x${state.game.startRoom.toString(16)})`;
+  const held = heldObject(state.inventory);
+  const slots = displayedSlots(state.inventory)
+    .map((r) => (r ? objectName(r.type) : "-"))
+    .join(" | ");
+  document.getElementById("hud-inventory")!.textContent =
+    `${held ? objectName(held.type) : "rien"}  [${slots}]`;
   document.getElementById("hud-objects")!.textContent = state.roomObjects.length
     ? state.roomObjects.map((o) => `0x${o.placed.type.toString(16)}`).join(" ")
     : "aucun";

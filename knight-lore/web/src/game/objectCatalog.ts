@@ -41,6 +41,11 @@ interface CatalogSlot {
 
 /** Un objet placé, une fois la rotation appliquée. */
 export interface PlacedObject {
+  /** Index de l'emplacement dans le catalogue. La ROM garde l'équivalent : au
+   * ramassage elle recopie le POINTEUR catalogue de l'objet (`(iy+10)/(iy+11)`)
+   * dans l'enregistrement d'inventaire, après l'avoir utilisé pour invalider
+   * l'entrée. Sans lui, un objet pris ne saurait plus d'où il vient. */
+  catalogSlot: number;
   type: number;
   gridX: number;
   gridY: number;
@@ -60,6 +65,7 @@ const SLOTS: readonly CatalogSlot[] = objectCatalogData.entries;
  */
 export function randomizeCatalog(rotation: number): PlacedObject[] {
   return SLOTS.map((slot, i) => ({
+    catalogSlot: i,
     type: OBJECT_TYPE_BASE | ((rotation + i) & (OBJECT_TYPE_COUNT - 1)),
     gridX: slot.grid_x,
     gridY: slot.grid_y,

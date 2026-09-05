@@ -35,9 +35,13 @@ export interface MoveIntent {
    * d'alignement de la ROM. */
   advance: boolean;
   jump: boolean;
+  /** Bouton « utiliser » (`fn_read_use_object_button` #1897). L'unique action
+   * du jeu sur les objets : prendre celui à portée, décaler l'inventaire, et
+   * poser celui qui en sort. */
+  use: boolean;
 }
 
-const EMPTY: MoveIntent = { targets: [], turn: 0, advance: false, jump: false };
+const EMPTY: MoveIntent = { targets: [], turn: 0, advance: false, jump: false, use: false };
 
 /** Mode "DIRECTIONAL CONTROL" : chaque direction demande une orientation.
  * Priorité à l'axe dominant, comme fn_player_read_input qui teste ses bits
@@ -63,7 +67,7 @@ function directionalIntent(input: KeyboardState): MoveIntent {
   if (dx !== 0) targets.push(dx < 0 ? 0 : 1);
   if (dy !== 0) targets.push(dy > 0 ? 2 : 3);
 
-  return { targets, turn: 0, advance: false, jump: false };
+  return { targets, turn: 0, advance: false, jump: false, use: false };
 }
 
 /** Mode rotation (celui du clavier d'origine) : gauche/droite tournent,
@@ -79,10 +83,21 @@ function rotationIntent(input: KeyboardState): MoveIntent {
     turn: left && !right ? -1 : right && !left ? 1 : 0,
     advance: forward,
     jump: false,
+    use: false,
   };
 }
 
 export function readIntent(mode: ControlMode, input: KeyboardState): MoveIntent {
   const base = mode === "directional" ? directionalIntent(input) : rotationIntent(input);
-  return { ...EMPTY, ...base, jump: input.consumeJustPressed(" ") };
+  // Les deux boutons se consomment séparément et peuvent tomber dans le MÊME
+  // tick : la ROM appelle fn_player_use_held_object AVANT
+  // fn_player_jump_trigger dans le corps de la logique joueur, si bien qu'on
+  // peut ramasser et sauter d'un coup -- observé en jeu, et c'est simplement
+  // l'ordre des appels.
+  return {
+    ...EMPTY,
+    ...base,
+    jump: input.consumeJustPressed(" "),
+    use: input.consumeJustPressed("e") || input.consumeJustPressed("enter"),
+  };
 }

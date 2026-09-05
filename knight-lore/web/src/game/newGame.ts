@@ -28,6 +28,9 @@ export interface NewGame {
    * identique (voir game/random.ts). */
   seed: number;
   startRoom: number;
+  /** Muté en cours de partie : ramasser un objet retire son emplacement, en
+   * poser un l'y remet à sa nouvelle position. C'est le pendant de
+   * l'invalidation par pointeur et de `fn_object_catalog_writeback` (#1E67). */
   catalog: PlacedObject[];
 }
 

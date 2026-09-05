@@ -9,6 +9,11 @@ const TRACKED_KEYS = new Set([
   "w", "a", "s", "d",
   "arrowup", "arrowdown", "arrowleft", "arrowright",
   " ", // Espace (e.key === " ")
+  // Touche ACTION. Pas Ctrl : `Ctrl+W` ferme l'onglet et n'est PAS annulable
+  // par preventDefault() -- or W est la touche « haut ». Idem Ctrl+T/Ctrl+N.
+  // "e" n'a aucun raccourci navigateur et tombe sous la main gauche en WASD ;
+  // "enter" sert d'alias pour qui joue aux flèches.
+  "e", "enter",
 ]);
 
 export interface KeyboardState {
