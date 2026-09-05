@@ -1636,6 +1636,51 @@ de la reconstruire — ici, le personnage — et pas au reste. Tout ce qui bouge
 sans qu'on y ait pensé sort du monde. Une limite encodée là où le jeu l'encode
 n'a pas ce défaut, parce qu'elle est au même endroit que ce qu'elle contraint.
 
+## 32. Le portage est un INSTRUMENT DE VÉRIFICATION du désassemblage, pas seulement un livrable
+
+**Le renversement.** On construit naturellement le portage comme l'aval du
+désassemblage : on comprend, puis on réécrit. Dans les faits, le flux va dans
+les deux sens — **jouer au portage révèle des trous du désassemblage** qu'aucune
+relecture de code n'aurait signalés, et le fait à un coût dérisoire.
+
+**Pourquoi ça marche si bien.** Un désassemblage se vérifie normalement contre
+lui-même : cohérence interne, recoupements, traces live coûteuses à monter. Le
+portage, lui, exécute *toutes* les conséquences d'une lecture en même temps, et
+un humain qui joue repère instantanément ce qui cloche. C'est un banc de test
+que personne n'a eu à écrire.
+
+**Trois trous trouvés en jouant, sur ce projet :**
+
+| observation en jeu | ce que ça a révélé |
+|---|---|
+| un coffre poussé sort de l'écran | la limite de salle n'est pas géométrique, elle est dans la primitive de déplacement (§31) |
+| les objets empilés ne tombent pas | la gravité était déjà lisible, par une ABSENCE d'écriture (§29) |
+| toujours les mêmes objets d'une partie à l'autre | l'artefact extrait contenait l'état d'une partie, pas des données (§30) |
+
+Aucune de ces trois n'aurait été trouvée en relisant l'assembleur : les deux
+premières étaient des notes déjà écrites et déjà classées « pas encore
+désassemblé », la troisième était invisible par construction.
+
+**Ce que ça change dans la conduite du projet.**
+
+- Une divergence constatée en jouant est une **piste de désassemblage**, pas un
+  bug de portage à rustiner. Le réflexe « je corrige côté portage » détruit
+  l'information : on obtient le bon comportement sans jamais apprendre pourquoi,
+  et on perd une occasion que le jeu vient d'offrir gratuitement.
+- Le portage doit donc rester **honnête plutôt que joli** : là où un fait
+  manque, mieux vaut un comportement absent et signalé qu'un comportement
+  plausible inventé. Un trou visible est un instrument ; un trou comblé à
+  l'intuition est un mensonge qui se propage.
+- Et l'utilisateur qui joue fait partie de l'outillage, au même titre qu'un
+  désassembleur. Ses observations valent des traces, et une observation
+  contredisant une note l'emporte sur la note tant qu'elle n'est pas expliquée.
+
+**Le corollaire de discipline.** Ce sens de circulation n'a de valeur que si
+les découvertes REDESCENDENT vers le désassemblage : symboles, statuts, source
+régénéré. Une trouvaille qui reste dans le code du portage laisse le livrable
+principal périmé, et la session suivante relira un source qui contredit ce
+qu'on sait déjà.
+
 ## Limites connues de cette méthode
 
 - Le sondage par breakpoint + poll a un coût réel (chaque hit/step est

@@ -186,6 +186,7 @@
 17A7 fn_player_materialize_anim_b
 17BC fn_player_materialize_anim_end
 17DC fn_player_materialize_anim_a
+17F4 fn_pickup_catalog_ptr_clear_and_idle
 17FC fn_player_materialize_anim_pivot
 1802 fn_hud_slot_notification
 1897 fn_read_use_object_button
@@ -214,6 +215,7 @@
 1D53 fn_pushable_block_logic
 1D66 fn_sliding_chest_logic
 1D71 fn_pushable_table_logic
+1D7F fn_static_calib_vector_table
 1DC1 fn_fill_rect
 1DFB fn_instantiate_room_objects
 1E67 fn_object_catalog_writeback
