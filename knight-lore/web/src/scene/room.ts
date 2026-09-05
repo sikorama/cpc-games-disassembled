@@ -9,6 +9,7 @@ import type { RoomEntity } from "../data/types";
 import { pushPolicyFor } from "../physics/solidTypes";
 import { OBJECT_TYPE_BASE, OBJECT_TYPE_COUNT } from "../game/objectCatalog";
 import { SPIKE_BALL_TYPE } from "./spikeBalls";
+import { isAutonomousBlockType } from "./autonomousBlocks";
 
 /** Entité résolue (texture chargée), indépendante de l'angle de vue --
  * séparée des draw calls pour que changer d'angle soit un simple recalcul
@@ -36,6 +37,9 @@ export interface ResolvedEntity {
    * tombe. Sortie du rendu statique et redessinée à sa position courante par
    * scene/spikeBalls.ts. */
   isSpikeBall: boolean;
+  /** Bloc à mouvement autonome (0x36/0x37 oscillants, 0x5B qui s'enfonce) :
+   * entité VIVANTE, sortie du rendu statique -- voir scene/autonomousBlocks.ts. */
+  isAutonomousBlock: boolean;
 }
 
 /**
@@ -117,6 +121,11 @@ export class LoadedRoom {
     return this.entities.filter((e) => e.isSpikeBall);
   }
 
+  /** Blocs à mouvement autonome de la salle (scene/autonomousBlocks.ts). */
+  getAutonomousBlocks(): ResolvedEntity[] {
+    return this.entities.filter((e) => e.isAutonomousBlock);
+  }
+
   /**
    * Construit les draw calls pour un angle de vue donné. Toute la logique
    * des 4 angles tient ici : on tourne les COORDONNÉES DE GRILLE avant
@@ -138,7 +147,8 @@ export class LoadedRoom {
     let maxY = -Infinity;
 
     for (const resolved of this.entities) {
-      const { entity, width, height, isWall, isMovable, isCatalogObject, isSpikeBall } = resolved;
+      const { entity, width, height, isWall, isMovable, isCatalogObject, isSpikeBall, isAutonomousBlock } =
+        resolved;
       if (hideWalls && isWall) continue;
       // Les objets ne participent même pas au cadrage : leur emplacement du
       // manifest appartient à une autre partie que celle qui se joue.
@@ -161,7 +171,7 @@ export class LoadedRoom {
       // Les boules comptent pour le CADRAGE à leur position de départ -- comme
       // les corps mobiles -- mais leur draw call vient de scene/spikeBalls.ts,
       // à leur position courante.
-      if (isMovable || isSpikeBall) continue;
+      if (isMovable || isSpikeBall || isAutonomousBlock) continue;
       drawCalls.push(call);
     }
 
@@ -248,6 +258,7 @@ export async function loadRoom(gl: WebGL2RenderingContext, roomId: number): Prom
       isMovable: pushPolicyFor(entity.type, entity.flags) !== null,
       isCatalogObject: isCatalogObjectType(entity.type),
       isSpikeBall: entity.type === SPIKE_BALL_TYPE,
+      isAutonomousBlock: isAutonomousBlockType(entity.type),
     });
   }
 

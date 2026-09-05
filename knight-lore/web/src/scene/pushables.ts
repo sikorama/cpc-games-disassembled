@@ -182,6 +182,7 @@ export function updatePushables(
     // encore nul (`ld a,(ix+09) / and a / jr nz`), pour ne pas écraser une
     // poussée qu'il aurait déjà reçue. C'est ce qui fait qu'une pile poussée
     // avance d'un bloc au lieu de se défaire.
+    if (zRes.blocked && zRes.delta <= 0) zRes.blocker?.standTarget?.onStoodOn();
     const support = zRes.blocked && zRes.delta <= 0 ? zRes.blocker?.pushTarget : undefined;
     if (support) {
       if (body.pendingX === 0) body.pendingX = support.pendingX;

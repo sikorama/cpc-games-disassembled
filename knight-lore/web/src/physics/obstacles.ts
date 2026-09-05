@@ -38,6 +38,18 @@ export interface PushTarget {
   readonly pendingY: number;
 }
 
+/** Ce qu'un obstacle expose quand SE TENIR DESSUS doit lui faire quelque chose.
+ *
+ * FAIT ROM : `fn_entity_collide_axis_z` (#24EA) fait `set 3,(iy+off_state_flags_2)`
+ * sur l'entité SUR LAQUELLE le mobile repose -- littéralement « quelque chose
+ * s'est posé sur moi ». C'est le mécanisme générique de plaque de pression, et
+ * il n'est pas propre au cube qui s'enfonce : le bloc dormant consomme le même
+ * bit. Décrit ici en interface minimale, comme `PushTarget`, pour que la
+ * physique ne dépende pas de la scène. */
+export interface StandTarget {
+  onStoodOn(): void;
+}
+
 export interface Obstacle {
   box: Box3;
   /** Catégorie d'origine -- uniquement pour le débogage visuel (voir
@@ -46,6 +58,9 @@ export interface Obstacle {
   /** Présent seulement sur les obstacles qui sont des corps mobiles poussables
    * (scene/pushables.ts). `undefined` = décor inerte. */
   pushTarget?: PushTarget;
+  /** Présent sur les obstacles qui réagissent à ce qui se tient dessus
+   * (scene/autonomousBlocks.ts). */
+  standTarget?: StandTarget;
 }
 
 // Repli si bbox_w/h absentes (murs) : demi-étendue X/Y fixe centrée sur

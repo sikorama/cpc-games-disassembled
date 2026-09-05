@@ -176,47 +176,24 @@ n'a que 6 phases, et la routine force explicitement les 3 bits bas à 6 ou 7
 *Rien ne bloque* : c'est du travail restant, pas une information manquante.
 La source du tirage, elle, n'est pas un écart -- voir `game/random.ts`.
 
-### Comportements dynamiques des blocs — RÉVISÉ 2026-09-04
+### Comportements dynamiques des blocs — RÉSORBÉE 2026-09-05
+Il ne reste rien dans cette entrée : les trois types qu'elle couvrait sont
+implémentés (`scene/autonomousBlocks.ts`). Conservée le temps d'une relecture,
+parce qu'elle a servi trois fois de point de rendez-vous.
 
-La poussée est implémentée (`scene/pushables.ts`) : table 0x54, coffre 0x55
-et bloc 0x3E sont des corps mobiles vivants. Ce qui reste ci-dessous est ce
-que cette entrée regroupait à tort.
-
-*Fait ROM qui a redécoupé l'entrée* : « poussable » n'est PAS un type, c'est
-le **bit 2 de `flags`** (+0x07) de l'instance. `fn_entity_collide_axis_x/_y`
-(#244C/#249B, `asm/code/doors_and_player_logic.asm:895-990`) recopient le
-vecteur en attente du mobile dans celui de l'entité heurtée dès que ce bit y
-est posé. Vérifié aussi sur les données : dans les 128 salles du manifest, le
-bit n'est posé que sur 0x3E, 0x54, 0x55, 0x60-0x67 et les personnages — et
-sur **aucune** instance de 0x36, 0x37, 0x5B, 0x8F, 0x07, 0x16.
-
-Ce qui reste, et n'a rien à voir avec la poussée :
-
-- **0x36/0x37, blocs mobiles** — mouvement autonome, pas une réaction au
-  joueur. Traités comme des blocs statiques solides pour l'instant, mais
-  **plus rien ne bloque depuis le 2026-09-05**. Les « deux constantes en code
-  auto-modifiant » (#0FBF/#0FD0) ne sont pas des constantes : ce sont les
-  **octets de déplacement** de deux `(ix+dd)`, vérifiés dans le dump
-  (`0FBD: dd 7e 01`, `0FCE: dd 77 09`). **0x36 oscille en X, 0x37 en Y** —
-  même routine, même amplitude, seul l'axe change. Cible :
-  `f(var_frame_counter + bit de l'adresse du slot)` repliée par bit4,
-  comparée à `(coord + 8) & 0x0F`, pas de ±1 ; le bit de l'adresse du slot
-  déphase les blocs d'une même salle entre eux.
-- **0x5B, cube qui s'enfonce** — **RÉSOLU 2026-09-05, la piste est fermée.**
-  La descente n'était ni dans `fn_sinking_cube_logic` (#0F67) ni dans le
-  système de collision : le cube écrit `(ix+0B)=0` juste avant `RST 10`, dont
-  le prélude fait `dec (ix+0B)` — l'octet vaut donc -1 quand la primitive le
-  relit comme composante Z. **Une unité de grille par déclenchement**
-  (bit3 de `state_flags_2`, consommé). Preuve croisée : le bloc mobile écrit
-  `1` au même endroit pour obtenir 0 après décrément, donc aucun mouvement
-  vertical. Implémentable tel quel.
-
-**Retiré de la liste** : *0x8F, bloc dormant*. Ce n'était pas un écart.
-`fn_dormant_block_transform` (#0F84) le laisse indiscernable d'un bloc
-statique tant que le bit3 de `state_flags_2` n'est pas posé ; une fois
-déclenché il devient 0xB8 puis 0xB9, dont la logique retombe en idle statique
-(`docs/SYMBOLS.md` 0xB8). Un bloc solide immobile est donc la simulation
-**fidèle** de 0x8F.
+- **0x36/0x37, blocs mobiles** — oscillation autonome sur UN axe chacun, X pour
+  0x36 et Y pour 0x37. Ce n'étaient pas deux jeux de constantes : le code
+  auto-modifiant réécrit les octets de *déplacement* de deux `(ix+dd)`.
+  Cible = onde triangulaire sur 16 unités, pas de ±1, et déphasage entre blocs
+  d'une même salle tiré du **bit 5 de l'adresse de leur slot** — reproduit
+  exactement, l'indice de slot étant conservé au décodage du manifest.
+- **0x5B, cube qui s'enfonce** — descend d'une unité par tick tant qu'on lui
+  reste dessus, et ne remonte jamais. La descente est l'effet de bord du
+  prélude de `RST 10` ; le déclencheur est le bit 3 posé par
+  `fn_entity_collide_axis_z` sur ce sur quoi on se pose. Les deux moitiés du
+  mécanisme ont été trouvées à trois semaines d'écart.
+- **0x8F, bloc dormant** — retiré dès le 2026-09-04, ce n'était pas un écart :
+  un bloc solide immobile en est la simulation fidèle.
 
 ### Bloc poussable 0x3E immobile
 Le portage lui donne la politique de vecteur de sa routine ROM, qui le rend

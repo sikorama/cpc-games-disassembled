@@ -631,6 +631,13 @@ export function updatePlayer(
     // (dz<=0) -- un blocage vers le haut (plafond/dessous d'un bloc) laisse
     // le joueur en l'air, il retombera dès le tick suivant.
     if (dz <= 0) {
+      // `set 3,(iy+off_state_flags_2)` : on signale à CE SUR QUOI on se pose
+      // qu'on s'y est posé. Le cube qui s'enfonce n'est que le consommateur le
+      // plus visible de ce bit -- le mécanisme est générique
+      // (fn_entity_collide_axis_z #24EA), et le joueur ne connaît aucun type
+      // de plaque de pression, exactement comme il ne connaît aucun type
+      // poussable.
+      zRes.blocker?.standTarget?.onStoodOn();
       player.airborne = false;
       // `res 3,(ix+off_cooldown_or_collision_flags)` (#22A1) : le drapeau de
       // saut n'est effacé qu'en touchant le sol EN DESCENTE -- exactement la

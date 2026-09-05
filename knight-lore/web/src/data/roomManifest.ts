@@ -56,6 +56,7 @@ export async function loadRoomEntities(roomId: number): Promise<RoomEntity[]> {
     .filter((e) => e.slot !== 0 && e.slot !== 1)
     .map((e) => ({
       type: parseHexByte(e.type),
+      slot: e.slot,
       gridX: parseHexByte(e.grid[0]),
       gridY: parseHexByte(e.grid[1]),
       gridZ: parseHexByte(e.grid[2]),

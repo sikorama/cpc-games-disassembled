@@ -48,11 +48,15 @@ const STATIC_DECOR = new Set<number>([0x80, 0x06, 0x07, 0x0a, 0x0b, 0x0c, 0x0d, 
  * statique les figerait à leur position de départ. */
 const SOLID_WITH_PENDING_BEHAVIOR = new Set<number>([
   0x16, // statue de crapaud
-  0x36, // bloc mobile A -- fn_moving_block_logic #0F98 (oscillation autonome)
-  0x37, // bloc mobile B -- même routine, constantes différentes
-  0x5b, // cube qui s'enfonce -- fn_sinking_cube_logic #0F67
   0x8f, // bloc dormant -- voir ci-dessus, fidèle en l'état
 ]);
+
+// RETIRÉS de cette liste le 2026-09-05, parce qu'ils ne sont plus « en
+// attente » : 0x36/0x37 (blocs mobiles, un axe chacun) et 0x5B (cube qui
+// s'enfonce) sont désormais des corps VIVANTS, gérés par
+// scene/autonomousBlocks.ts, qui fournissent leur obstacle à leur position
+// courante. Les laisser ici les figerait à leur position de départ -- le même
+// piège que pour les corps poussables.
 
 // EXCLUS volontairement, et pourquoi :
 // - dangers qui ne bloquent pas le déplacement dans l'original : pointes au

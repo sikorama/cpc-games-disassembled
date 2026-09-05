@@ -34,6 +34,12 @@ export interface RawRoomManifest {
  * de grille brutes (0-255), PAS converties en pixels écran — voir
  * render/isoMath.ts, c'est la caméra qui projette. */
 export interface RoomEntity {
+  /** Indice du slot d'entité (0-39) dans `struct_entities_base`. Conservé au
+   * décodage parce que ce n'est pas qu'un numéro de ligne : la ROM dérive de
+   * l'ADRESSE du slot le déphasage des blocs mobiles
+   * (`fn_moving_block_logic` #0F98 teste le bit 5 de l'octet bas). Sans lui il
+   * faudrait inventer ce déphasage, donc introduire un écart visible. */
+  slot: number;
   type: number;
   gridX: number;
   gridY: number;

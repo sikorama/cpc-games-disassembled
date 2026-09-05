@@ -17,6 +17,13 @@ import {
   type GameOverCause,
 } from "./game/lives";
 import {
+  createAutonomousBlocks,
+  updateAutonomousBlocks,
+  autonomousBlockObstacles,
+  autonomousBlockDrawCalls,
+  type AutonomousBlocks,
+} from "./scene/autonomousBlocks";
+import {
   createSpikeBalls,
   updateSpikeBalls,
   spikeBallObstacles,
@@ -104,6 +111,13 @@ interface AppState {
   pushables: PushableBody[];
   /** Boules à pics de la salle -- entités vivantes, elles tombent. */
   spikeBalls: SpikeBall[];
+  /** Blocs oscillants et cubes qui s'enfoncent (scene/autonomousBlocks.ts). */
+  blocks: AutonomousBlocks;
+  /** `var_frame_counter` (#006A) : compteur de frames de LOGIQUE, incrémenté
+   * par la boucle elle-même. Ce n'est pas du confort de débogage -- l'oscillation
+   * des blocs mobiles en est directement fonction, et deux blocs d'une même
+   * salle sont déphasés par l'adresse de leur slot. */
+  frameCounter: number;
   /** Horloge du jeu : cycle jour/nuit, compteur de jours, et demande de
    * transformation du joueur. Volontairement HORS de la salle et hors du
    * joueur -- c'est un état de partie, il survit aux changements de salle
@@ -195,6 +209,8 @@ async function main() {
     obstacles: buildObstacles(room.getEntities()),
     pushables: createPushables(room.getMovableEntities()),
     spikeBalls: createSpikeBalls(room.getSpikeBalls()),
+    blocks: createAutonomousBlocks(room.getAutonomousBlocks()),
+    frameCounter: 0,
     dayNight: createDayNightState(),
     game,
     lives: createLivesState(),
@@ -233,6 +249,7 @@ async function main() {
     state.obstacles = buildObstacles(state.room.getEntities());
     state.pushables = createPushables(state.room.getMovableEntities());
     state.spikeBalls = createSpikeBalls(state.room.getSpikeBalls());
+    state.blocks = createAutonomousBlocks(state.room.getAutonomousBlocks());
     state.guards = await loadGuards(roomId);
     state.roomObjects = await loadRoomObjects(
       gl,
@@ -280,6 +297,7 @@ async function main() {
       // non plus, c'est la ré-instanciation de la salle qui le fait. D'où
       // l'impression, en jeu, qu'elles tombent quand on entre dans une pièce.
       state.spikeBalls = createSpikeBalls(state.room.getSpikeBalls());
+      state.blocks = createAutonomousBlocks(state.room.getAutonomousBlocks());
       state.guards = await loadGuards(targetRoomId);
       state.roomObjects = await loadRoomObjects(
         gl,
@@ -339,9 +357,11 @@ async function main() {
       // Les corps mobiles sont des obstacles À LEUR POSITION COURANTE : la
       // liste est reconstruite à chaque tick, elle ne peut pas être mise en
       // cache avec le décor.
+      state.frameCounter += 1;
       const obstacles = state.obstacles
         .concat(pushableObstacles(state.pushables))
-        .concat(spikeBallObstacles(state.spikeBalls));
+        .concat(spikeBallObstacles(state.spikeBalls))
+        .concat(autonomousBlockObstacles(state.blocks));
 
       // AVANT le joueur : c'est le cycle qui pose la demande de
       // transformation, et le joueur la consomme dans le même tick s'il le
@@ -368,6 +388,9 @@ async function main() {
       // physics/solidTypes.ts).
       updatePushables(state.pushables, state.obstacles, bounds);
       updateSpikeBalls(state.spikeBalls, state.obstacles, bounds);
+      // APRÈS le joueur : le bit « on me marche dessus » est posé pendant SA
+      // résolution, et le cube ne fait que le consommer à son tour.
+      updateAutonomousBlocks(state.blocks, state.frameCounter, state.obstacles, bounds);
 
       // MORT AU CONTACT. La règle -- tout contact avec un ennemi ou un piège
       // coûte une vie -- est une observation de jeu, pas un fait désassemblé :
@@ -433,6 +456,7 @@ async function main() {
       ...pushableDrawCalls(state.pushables, state.view),
       ...objectDrawCalls(state.roomObjects, state.view),
       ...spikeBallDrawCalls(state.spikeBalls, state.view),
+      ...autonomousBlockDrawCalls(state.blocks, state.view),
     ];
     renderer.draw(state.camera.getView(), state.camera.getProjection(aspect), drawCalls);
     drawTopView(
@@ -498,6 +522,7 @@ function killPlayer(state: AppState): void {
   state.obstacles = buildObstacles(state.room.getEntities());
   state.pushables = createPushables(state.room.getMovableEntities());
   state.spikeBalls = createSpikeBalls(state.room.getSpikeBalls());
+  state.blocks = createAutonomousBlocks(state.room.getAutonomousBlocks());
 
   const player = state.player;
   player.gridX = state.checkpoint.gridX;
