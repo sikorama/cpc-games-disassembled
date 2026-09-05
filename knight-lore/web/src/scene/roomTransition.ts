@@ -72,14 +72,23 @@ export function neighborRoomId(roomId: number, crossing: EdgeCrossing): number {
  * plus simple, et ça fait apparaître le joueur au bon endroit
  * perpendiculaire dans la salle suivante). Atterrissage par défaut dans
  * la nouvelle salle : gridZ au sol, vitesse verticale nulle. */
-export function repositionForEntry(player: PlayerState, crossing: EdgeCrossing): void {
+export function repositionForEntry(
+  player: PlayerState,
+  crossing: EdgeCrossing,
+  entryDoor: RoomEntity | null,
+): void {
   const entryCoord = crossing.side === "max" ? ROOM_EDGE_MIN + ENTRY_MARGIN : ROOM_EDGE_MAX - ENTRY_MARGIN;
   if (crossing.axis === "x") {
     player.gridX = entryCoord;
   } else {
     player.gridY = entryCoord;
   }
-  player.gridZ = 0x80;
+  // ON ARRIVE AU NIVEAU DE LA PORTE, pas au sol. `0x80` écrit en dur déposait
+  // le joueur au rez-de-chaussée même en sortant d'une porte d'étage, d'où une
+  // chute immédiate à l'arrivée. Le repli sur 0x80 ne sert que si aucun montant
+  // n'a été trouvé en face -- une salle voisine dont les données de porte ne
+  // correspondent pas, ce qui ne devrait pas arriver mais ne doit pas planter.
+  player.gridZ = entryDoor?.gridZ ?? 0x80;
   player.velZ = 0;
   player.airborne = false;
 }
@@ -118,15 +127,77 @@ export const DOOR_GAP_HALF_WIDTH = 16;
  * (clampToEdge à la place) si elle renvoie `false`, même si
  * `neighborRoomId(...)` désigne une salle qui existe bel et bien.
  */
-export function hasDoorForCrossing(entities: RoomEntity[], crossing: EdgeCrossing, perpCoord: number): boolean {
+/**
+ * Tolérance en HAUTEUR pour franchir une porte.
+ *
+ * FAIT ROM, et c'est une constante EN DUR, la même pour toutes les portes :
+ * `fn_aabb_distance_test` termine par `ld a,(ix+#0B) / sub (iy+grid_z) / …
+ * cp #04` (#20C2-#20CA). Les tolérances X et Y, elles, sont fournies par le
+ * montant appelant (`ld hl,#060F` → 15 en X, 6 en Y pour une orientation) ;
+ * seule celle en Z est figée dans la routine partagée.
+ *
+ * Quatre unités, c'est étroit : il faut être AU NIVEAU de la porte, pas
+ * approximativement à sa hauteur.
+ */
+export const DOOR_Z_TOLERANCE = 4;
+
+/**
+ * Cherche le montant de porte qui autorise ce franchissement, ou `null`.
+ *
+ * TROIS AXES, pas deux. Le test de la ROM compare la position du joueur au
+ * point de référence du montant sur X, Y **et Z**, et abandonne dès qu'un axe
+ * dépasse sa tolérance. Le portage ne testait que X/Y : on pouvait donc sortir
+ * par une porte située un étage plus haut, ou plus bas, en marchant simplement
+ * sur le bord. Or 52 des 572 montants du jeu sont à `grid_z = 0xB0` et non au
+ * sol -- ce sont de vraies portes d'étage, et sans le test en Z elles étaient
+ * franchissables depuis le rez-de-chaussée.
+ *
+ * Renvoie le montant plutôt qu'un booléen : l'appelant en a besoin pour savoir
+ * à quelle HAUTEUR déposer le joueur de l'autre côté.
+ */
+export function findDoorForCrossing(
+  entities: RoomEntity[],
+  crossing: EdgeCrossing,
+  perpCoord: number,
+  playerZ: number,
+): RoomEntity | null {
   const edgeCoord = crossing.side === "max" ? ROOM_EDGE_MAX : ROOM_EDGE_MIN;
-  return entities.some((e) => {
-    if (!DOOR_TYPES.has(e.type)) return false;
-    const onEdge = crossing.axis === "x" ? e.gridX === edgeCoord : e.gridY === edgeCoord;
-    if (!onEdge) return false;
-    const doorPerp = crossing.axis === "x" ? e.gridY : e.gridX;
-    return Math.abs(doorPerp - perpCoord) <= DOOR_GAP_HALF_WIDTH;
-  });
+  return (
+    entities.find((e) => {
+      if (!DOOR_TYPES.has(e.type)) return false;
+      const onEdge = crossing.axis === "x" ? e.gridX === edgeCoord : e.gridY === edgeCoord;
+      if (!onEdge) return false;
+      const doorPerp = crossing.axis === "x" ? e.gridY : e.gridX;
+      if (Math.abs(doorPerp - perpCoord) > DOOR_GAP_HALF_WIDTH) return false;
+      return Math.abs(e.gridZ - playerZ) < DOOR_Z_TOLERANCE;
+    }) ?? null
+  );
+}
+
+/**
+ * Le montant par lequel on ARRIVE dans la salle voisine -- celui du bord
+ * OPPOSÉ, à la même coordonnée perpendiculaire.
+ *
+ * Pas de test en Z ici, et c'est volontaire : c'est justement cette porte qui
+ * FIXE la hauteur d'arrivée. On sait déjà qu'on est passé, la question n'est
+ * plus « a-t-on le droit » mais « à quel niveau débouche-t-on ».
+ */
+export function findEntryDoor(
+  entities: RoomEntity[],
+  crossing: EdgeCrossing,
+  perpCoord: number,
+): RoomEntity | null {
+  // On entre par le bord opposé à celui qu'on a franchi.
+  const edgeCoord = crossing.side === "max" ? ROOM_EDGE_MIN : ROOM_EDGE_MAX;
+  return (
+    entities.find((e) => {
+      if (!DOOR_TYPES.has(e.type)) return false;
+      const onEdge = crossing.axis === "x" ? e.gridX === edgeCoord : e.gridY === edgeCoord;
+      if (!onEdge) return false;
+      const doorPerp = crossing.axis === "x" ? e.gridY : e.gridX;
+      return Math.abs(doorPerp - perpCoord) <= DOOR_GAP_HALF_WIDTH;
+    }) ?? null
+  );
 }
 
 /** Bloque le joueur pile au bord si la salle voisine calculée n'existe

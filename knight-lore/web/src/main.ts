@@ -70,7 +70,8 @@ import {
   neighborRoomId,
   repositionForEntry,
   clampToEdge,
-  hasDoorForCrossing,
+  findDoorForCrossing,
+  findEntryDoor,
   type EdgeCrossing,
 } from "./scene/roomTransition";
 
@@ -304,7 +305,11 @@ async function main() {
         await loadSpriteIndex(),
         objectsInRoom(state.game.catalog, targetRoomId),
       );
-      repositionForEntry(state.player, crossing);
+      // La hauteur d'arrivée vient du montant d'en face, pas d'une constante :
+      // une porte d'étage dépose le joueur à l'étage.
+      const perp = crossing.axis === "x" ? state.player.gridY : state.player.gridX;
+      const entryDoor = findEntryDoor(state.room.getEntities(), crossing, perp);
+      repositionForEntry(state.player, crossing, entryDoor);
       // Franchir une porte refuse la transformation pendant 3 ticks (`or #30`
       // sur le cooldown, asm/code/doors_and_player_logic.asm:761-763). Armé
       // ici parce que c'est ici que le portage fait ce que la ROM fait dans
@@ -432,7 +437,15 @@ async function main() {
         // pas réellement connectée par une porte.
         const targetRoomId = neighborRoomId(state.roomId, crossing);
         const perpCoord = crossing.axis === "x" ? state.player.gridY : state.player.gridX;
-        if (hasDoorForCrossing(state.room.getEntities(), crossing, perpCoord) && validRoomIds.has(targetRoomId)) {
+        // TROIS AXES : X, Y et surtout Z. Sans la hauteur, on sortait par une
+        // porte d'étage en marchant au rez-de-chaussée le long du bord.
+        const exitDoor = findDoorForCrossing(
+          state.room.getEntities(),
+          crossing,
+          perpCoord,
+          state.player.gridZ,
+        );
+        if (exitDoor && validRoomIds.has(targetRoomId)) {
           void transitionRoom(targetRoomId, crossing);
         } else {
           // Pas de porte sur ce côté, ou pas de salle voisine à cette

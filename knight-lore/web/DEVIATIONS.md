@@ -218,9 +218,32 @@ placer le joueur contre un 0x3E (salle 0xBB, 0x08, 0x58 ou 0xC7) et regarder
 si `grid_x`/`grid_y` du bloc bougent. Si oui, une seule valeur d'énumération
 change dans `physics/solidTypes.ts`.
 
-### Contrainte physique des portes
-Les montants (0x02/0x03) sont traversables. Reste à traiter la **hauteur**
-de porte (ne pas pouvoir sauter par-dessus une porte basse).
+### Contrainte physique des portes — HAUTEUR TRAITÉE 2026-09-05
+Les montants restent traversables (on peut marcher au travers du bois). Ce qui
+est réglé, c'est le **franchissement**, qui se fait désormais sur TROIS axes.
+
+*Fait ROM* : `fn_aabb_distance_test` (#209F) compare la position du joueur au
+point de référence du montant sur X, Y **et Z**, et abandonne dès qu'un axe
+dépasse sa tolérance. Les tolérances X/Y sont fournies par le montant appelant
+(`ld hl,#060F` → 15 et 6 pour une orientation) ; celle en Z est **en dur dans
+la routine partagée** : `cp #04`. Quatre unités, donc il faut être au niveau de
+la porte, pas approximativement à sa hauteur.
+
+*Ce que ça corrigeait* : 52 des 572 montants du jeu sont à `grid_z = 0xB0` et
+non au sol. Sans test en Z, ils étaient franchissables depuis le
+rez-de-chaussée, et le joueur était en prime déposé à `0x80` en arrivant --
+une constante écrite en dur.
+
+*Régularité relevée dans les données* : ces 52 portes d'étage ont toutes un
+vis-à-vis dans la salle voisine, et l'écart de hauteur vaut **toujours
+exactement +0x30**, sans une exception. Soit 4 × 0x0C, la hauteur
+d'empilement d'un bloc — quatre blocs. La hauteur d'arrivée est donc prise sur
+le montant de la salle de DESTINATION, ce qui traite les deux sens du passage
+sans cas particulier.
+
+*Reste* : sauter par-dessus une porte basse. La contrainte de hauteur du
+montant lui-même (son `bbox_d` vaut 0x28 pour les 572) n'est pas appliquée au
+solveur.
 
 ### État de jeu
 Pas d'objets ramassables. Cycle jour/nuit, transformation, mort au contact,

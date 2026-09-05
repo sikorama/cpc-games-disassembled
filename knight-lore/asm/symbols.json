@@ -2238,7 +2238,7 @@
       "type": "code",
       "status": "confirmed",
       "short": "Test de distance générique 3 axes entre (ix+09/0A/0B) [point de test d'une porte] et (iy+01/02/03) [position d'une entité",
-      "long": "Test de distance générique 3 axes entre (ix+09/0A/0B) [point de test d'une porte] et (iy+01/02/03) [position d'une entité, ici toujours le joueur] — |dx|<L, |dy|<H, |dz|<4."
+      "long": "Test de distance AABB partage, appele par fn_door_proximity_test (#2091). Compare la position du JOUEUR (IY = struct_entities_base) au point de reference du montant, stocke par celui-ci dans ses champs +09/+0A/+0B -- pour l'orientation courante : +09 = grid_x, +0A = grid_y + #0D, +0B = grid_z. TROIS AXES, et il abandonne des qu'un seul depasse. Les tolerances X et Y sont fournies par le montant appelant dans HL (`ld hl,#060F` -> L=#0F=15 en X, H=#06=6 en Y pour cette orientation) ; celle en Z est EN DUR dans la routine : `cp #04`. Quatre unites seulement, la meme pour toutes les portes -- il faut etre AU NIVEAU de la porte, pas approximativement a sa hauteur. CE QUE CA GOUVERNE, verifie sur les donnees : 52 des 572 montants du jeu sont a grid_z = #B0 et non au sol. Ils ont tous un vis-a-vis dans la salle voisine, et l'ecart de hauteur entre les deux cotes vaut TOUJOURS exactement +#30 -- soit 4 x #0C, la hauteur d'empilement d'un bloc. Aucune exception sur les 52."
     },
     {
       "addr": "20CB",
