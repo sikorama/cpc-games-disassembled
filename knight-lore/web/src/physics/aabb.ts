@@ -33,6 +33,25 @@ function overlapsOtherAxes(a: Box3, b: Box3, axis: Axis): boolean {
   return xOverlap && yOverlap;
 }
 
+/**
+ * Les deux boîtes se recouvrent-elles sur les TROIS axes ?
+ *
+ * Le jeu n'a pas de collision fine par forme : tout passe par le même test de
+ * recouvrement de boîtes, y compris pour les ennemis ronds
+ * (`fn_check_collisions`, dispatch #27FE). Un contact mortel n'est donc pas un
+ * cas particulier de géométrie, juste ce test appliqué à une autre paire.
+ */
+export function boxesOverlap(a: Box3, b: Box3): boolean {
+  return (
+    a.minX < b.maxX &&
+    b.minX < a.maxX &&
+    a.minY < b.maxY &&
+    b.minY < a.maxY &&
+    a.minZ < b.maxZ &&
+    b.minZ < a.maxZ
+  );
+}
+
 export interface AxisResolution<T> {
   /** Déplacement réellement permis sur cet axe (peut être réduit par un
    * obstacle, jamais agrandi). */

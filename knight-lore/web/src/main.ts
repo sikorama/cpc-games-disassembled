@@ -8,6 +8,14 @@ import { loadRoom, type LoadedRoom, type RoomView } from "./scene/room";
 import { createKeyboardState, type KeyboardState } from "./input/keyboard";
 import { buildObstacles, type Obstacle } from "./physics/obstacles";
 import { boundsForRoom } from "./physics/roomBounds";
+import { boxesOverlap } from "./physics/aabb";
+import {
+  createLivesState,
+  loseLife,
+  livesRemaining,
+  type LivesState,
+  type GameOverCause,
+} from "./game/lives";
 import {
   createSpikeBalls,
   updateSpikeBalls,
@@ -28,6 +36,9 @@ import {
   updatePlayer,
   playerDrawCalls,
   armTransformCooldownAfterDoor,
+  playerBox,
+  LEGS_BASE_DAY,
+  LEGS_BASE_NIGHT,
   type PlayerState,
 } from "./scene/player";
 import { startNewGame, type NewGame } from "./game/newGame";
@@ -41,7 +52,7 @@ import {
   halfCycleProgress,
   type DayNightState,
 } from "./game/dayNight";
-import { createGuardState, updateGuard, guardDrawCalls, type GuardState } from "./scene/guard";
+import { createGuardState, updateGuard, guardDrawCalls, guardBox, type GuardState } from "./scene/guard";
 import { drawTopView } from "./debug/topView";
 import { TickAccumulator } from "./game/tick";
 import { readIntent, type ControlMode } from "./input/controlMode";
@@ -100,6 +111,16 @@ interface AppState {
    * attribution des types du catalogue d'objets. Immuable pour la durée de la
    * partie -- c'est un octet du jeu d'origine (game/newGame.ts). */
   game: NewGame;
+  lives: LivesState;
+  /** Cause de fin de partie, ou `null` tant qu'on joue. */
+  gameOver: GameOverCause | null;
+  /** Position de réapparition. FAIT ROM : ce n'est pas un point fixe de la
+   * salle, c'est un CHECKPOINT réécrit à chaque porte franchie -- la queue de
+   * `fn_player_door_transition` (#2383-#23A2) recopie la position courante du
+   * joueur dans `tbl_init_entities_template`, celui-là même que
+   * `fn_init_room_entities` relit à la mort. D'où « on réapparaît là où on est
+   * entré dans la pièce ». */
+  checkpoint: { gridX: number; gridY: number; gridZ: number };
   /** Objets à ramasser présents dans la salle courante, tirés du CATALOGUE et
    * non du manifest (voir scene/objects.ts). */
   roomObjects: RoomObject[];
@@ -169,6 +190,9 @@ async function main() {
     spikeBalls: createSpikeBalls(room.getSpikeBalls()),
     dayNight: createDayNightState(),
     game,
+    lives: createLivesState(),
+    gameOver: null,
+    checkpoint: { ...PLAYER_SPAWN },
     roomObjects: startObjects,
     input: createKeyboardState(window),
     transitioning: false,
@@ -221,6 +245,7 @@ async function main() {
     // replacé à l'arrêt, et le gel de phase (walkAnimation.ts) le laisserait
     // sinon figé au milieu d'une foulée d'une salle à l'autre.
     state.player.anim.phase = 0;
+    state.checkpoint = { ...PLAYER_SPAWN };
     cancelPendingTransform(state.dayNight);
     rebuild();
   }
@@ -259,6 +284,13 @@ async function main() {
       // ici parce que c'est ici que le portage fait ce que la ROM fait dans
       // fn_player_door_transition.
       armTransformCooldownAfterDoor(state.player);
+      // CHECKPOINT : la ROM recopie ici la position du joueur dans le template
+      // que relira fn_init_room_entities à la prochaine mort.
+      state.checkpoint = {
+        gridX: state.player.gridX,
+        gridY: state.player.gridY,
+        gridZ: state.player.gridZ,
+      };
       // Une demande de transformation en attente est PERDUE en entrant dans
       // une salle (fn_init_room_entities #29B4 remet #0077 à zéro). Le cycle,
       // lui, continue -- seule la demande tombe.
@@ -292,7 +324,10 @@ async function main() {
     lastTime = now;
 
     const ticks = ticker.take(dt);
-    for (let i = 0; i < ticks && !state.transitioning; i++) {
+    // Les 40 jours écoulés terminent la partie au même titre que les vies --
+    // deux causes distinctes, même issue (game/dayNight.ts, `cp #40`).
+    if (state.dayNight.daysExhausted && !state.gameOver) state.gameOver = "days-exhausted";
+    for (let i = 0; i < ticks && !state.transitioning && !state.gameOver; i++) {
       // Les corps mobiles sont des obstacles À LEUR POSITION COURANTE : la
       // liste est reconstruite à chaque tick, elle ne peut pas être mise en
       // cache avec le décor.
@@ -325,6 +360,17 @@ async function main() {
       // physics/solidTypes.ts).
       updatePushables(state.pushables, state.obstacles, bounds);
       updateSpikeBalls(state.spikeBalls, state.obstacles, bounds);
+
+      // MORT AU CONTACT. La règle -- tout contact avec un ennemi ou un piège
+      // coûte une vie -- est une observation de jeu, pas un fait désassemblé :
+      // le déclencheur exact reste introuvable dans la ROM (voir
+      // docs/SYMBOLS.md #29B4 et game/lives.ts). L'EFFET, lui, est lu dans le
+      // code. Testé APRÈS que tout ait bougé ce tick, pour qu'un ennemi qui
+      // vient sur le joueur compte autant que l'inverse.
+      if (playerTouchesHazard(state)) {
+        killPlayer(state);
+        break; // la salle vient d'être réinitialisée : ce tick s'arrête là
+      }
 
       const crossing = detectEdgeCrossing(state.player);
       if (crossing) {
@@ -375,6 +421,73 @@ async function main() {
   requestAnimationFrame(frame);
 }
 
+/**
+ * Le joueur touche-t-il un ennemi ou un piège ?
+ *
+ * Un seul test de recouvrement de boîtes pour les deux, parce que le jeu n'en
+ * a pas d'autre : `fn_check_collisions` traite toutes les paires d'entités de
+ * la même façon, y compris les ennemis ronds (dispatch #27FE). « Ennemi » et
+ * « piège » sont deux mots pour la même chose du point de vue de la collision.
+ *
+ * Ne couvre que ce que le portage fait vivre aujourd'hui : gardes et boules à
+ * pics. Les autres dangers du jeu (fantômes, balles, poussoirs) rejoindront
+ * cette liste quand leur logique sera portée -- la liste est courte parce que
+ * le portage est jeune, pas parce que la règle serait restreinte.
+ */
+function playerTouchesHazard(state: AppState): boolean {
+  const box = playerBox(state.player);
+  // Pendant la transformation, le joueur est figé et son corps est éteint : la
+  // ROM ne fait tourner ni entrée, ni gravité, ni collision pour lui. Le
+  // laisser mourir à ce moment-là inventerait une vulnérabilité.
+  if (state.player.transform) return false;
+  if (state.guards.some((guard) => boxesOverlap(box, guardBox(guard)))) return true;
+  return state.spikeBalls.some((ball) => boxesOverlap(box, ball.box()));
+}
+
+/**
+ * Perd une vie, et réapparaît -- ou termine la partie.
+ *
+ * UN SEUL GESTE, comme dans la ROM : le décrément vit dans
+ * `fn_init_room_entities` (#29B4), la routine qui réinstalle le joueur. Il n'y
+ * a pas de « perdre une vie » séparé de « réapparaître ».
+ *
+ * La salle est RECHARGÉE, pas seulement le joueur : la ROM enchaîne sur
+ * `fn_init_room` avec le même `room_number`. Coffres poussés, boules tombées
+ * et objets reviennent donc à leur état de départ. Aucun message à l'écran, et
+ * pas de retour au menu -- c'est ce qui distingue une mort d'un game over.
+ */
+function killPlayer(state: AppState): void {
+  if (loseLife(state.lives)) {
+    state.gameOver = "no-lives";
+    return;
+  }
+
+  // Réinitialisation de la salle courante, sans re-fetch : les entités
+  // reprennent leur position de manifest, exactement ce que fait fn_init_room.
+  state.obstacles = buildObstacles(state.room.getEntities());
+  state.pushables = createPushables(state.room.getMovableEntities());
+  state.spikeBalls = createSpikeBalls(state.room.getSpikeBalls());
+
+  const player = state.player;
+  player.gridX = state.checkpoint.gridX;
+  player.gridY = state.checkpoint.gridY;
+  player.gridZ = state.checkpoint.gridZ;
+  player.velX = 0;
+  player.velY = 0;
+  player.velZ = 0;
+  player.airborne = true;
+  player.jumping = false;
+  player.transform = null;
+  player.anim.phase = 0;
+
+  // FORME REPRISE DU CYCLE COURANT, pas de celle qu'on avait en mourant.
+  // fn_init_room_entities relit le type de l'icône soleil/lune et en force le
+  // bit 5 -- le bit de forme du `XOR #20`. Mourir en loup-garou et réapparaître
+  // en chevalier parce que le jour s'est levé est donc fidèle.
+  player.legsBase = state.dayNight.phase === "day" ? LEGS_BASE_DAY : LEGS_BASE_NIGHT;
+  cancelPendingTransform(state.dayNight);
+}
+
 function updateHud(state: AppState): void {
   document.getElementById("hud-view")!.textContent = String(state.view);
   document.getElementById("hud-walls")!.textContent = state.hideWalls ? "masqués" : "visibles";
@@ -397,6 +510,12 @@ function updateHud(state: AppState): void {
   document.getElementById("hud-days")!.textContent = dn.daysExhausted
     ? `${dayCounterDecimal(dn)} (épuisé)`
     : String(dayCounterDecimal(dn));
+  const over = state.gameOver;
+  document.getElementById("hud-lives")!.textContent = over
+    ? over === "no-lives"
+      ? "PARTIE TERMINÉE — plus de vies"
+      : "PARTIE TERMINÉE — 40 jours écoulés"
+    : String(livesRemaining(state.lives));
   document.getElementById("hud-seed")!.textContent =
     `${state.game.seed.toString(16)} (départ 0x${state.game.startRoom.toString(16)})`;
   document.getElementById("hud-objects")!.textContent = state.roomObjects.length

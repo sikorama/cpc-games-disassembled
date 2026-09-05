@@ -93,6 +93,27 @@ une décision de gameplay.
 directional par défaut donne le mode qui n'est **pas** celui du clavier
 d'origine.
 
+### Condition de mort tirée de l'observation, pas du désassemblage
+Le portage fait perdre une vie dès que la boîte du joueur recouvre celle d'un
+ennemi ou d'un piège.
+
+*Fait ROM* : l'EFFET est entièrement désassemblé — `fn_init_room_entities`
+(#29B4) décrémente `var_life_counter`, termine la partie quand le compteur
+devient négatif, recharge la salle et restaure la forme d'après le cycle
+jour/nuit courant. Le DÉCLENCHEUR, lui, est **pas encore désassemblé** : aucun
+`JP`/`CALL` direct des 16K bas n'atteint #05A2, donc le chemin de mort en jeu
+est indirect et reste introuvable statiquement (voir `docs/SYMBOLS.md` #29B4).
+
+*Ce qui comble le trou* : l'observation de l'utilisateur en jouant — « à chaque
+fois qu'on touche un ennemi ou un piège, on perd une vie ». C'est une source
+légitime (`docs/METHODOLOGY.md` §32) mais ce n'est pas la même chose qu'un fait
+lu dans le code : la ROM impose peut-être des conditions supplémentaires
+(invulnérabilité après réapparition, marge de tolérance, types d'ennemis
+exclus) qu'aucune observation ne révélerait tant qu'on ne les cherche pas.
+
+*À trancher* : point d'arrêt en ÉCRITURE sur `#0080` pendant une mort réelle.
+L'adresse qui écrit donne le déclencheur d'un coup, et cette entrée disparaît.
+
 ### Formes de collision par entité (sphère pour les ennemis ronds)
 Prévu, pas encore implémenté.
 
@@ -225,13 +246,18 @@ Les montants (0x02/0x03) sont traversables. Reste à traiter la **hauteur**
 de porte (ne pas pouvoir sauter par-dessus une porte basse).
 
 ### État de jeu
-Pas de mort au contact, pas de vies, pas d'objets ramassables. Le cycle
-jour/nuit et la transformation, eux, sont implémentés — voir plus haut.
+Pas d'objets ramassables. Cycle jour/nuit, transformation, mort au contact,
+compteur de vies et les deux fins de partie sont implémentés.
 
-*Conséquence visible* : les pièges qui bougent bougent pour de bon mais ne
-font rien. Une boule à pics (0x3F) tombe fidèlement — armement aléatoire,
-verrou par salle, chute accélérée — et traverse le joueur sans effet. C'est
-un manque de la mécanique de dégâts, pas un défaut du piège.
+*Ce qui reste incomplet, et c'est de l'avancement, pas une décision* : seuls
+les gardes et les boules à pics sont mortels, parce que ce sont les seuls
+dangers dont la logique est portée. Fantômes, balles et poussoirs rejoindront
+la règle quand ils seront implémentés — la liste est courte parce que le
+portage est jeune, pas parce que la règle serait restreinte.
+
+*Vie bonus* : l'objet 0x67 incrémente le compteur (`INC (0x0080)`,
+`fn_bonus_life_pickup_logic` #1A4A). La fonction existe côté portage mais
+reste inatteignable tant que le ramassage n'est pas fait.
 
 ---
 
