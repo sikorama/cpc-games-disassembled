@@ -9,6 +9,13 @@ import { createKeyboardState, type KeyboardState } from "./input/keyboard";
 import { buildObstacles, type Obstacle } from "./physics/obstacles";
 import { boundsForRoom } from "./physics/roomBounds";
 import {
+  createSpikeBalls,
+  updateSpikeBalls,
+  spikeBallObstacles,
+  spikeBallDrawCalls,
+  type SpikeBall,
+} from "./scene/spikeBalls";
+import {
   createPushables,
   pushableDrawCalls,
   pushableObstacles,
@@ -82,6 +89,8 @@ interface AppState {
    * fournissent leur obstacle à leur position courante -- voir syncObstacles(). */
   obstacles: Obstacle[];
   pushables: PushableBody[];
+  /** Boules à pics de la salle -- entités vivantes, elles tombent. */
+  spikeBalls: SpikeBall[];
   /** Horloge du jeu : cycle jour/nuit, compteur de jours, et demande de
    * transformation du joueur. Volontairement HORS de la salle et hors du
    * joueur -- c'est un état de partie, il survit aux changements de salle
@@ -157,6 +166,7 @@ async function main() {
     guards,
     obstacles: buildObstacles(room.getEntities()),
     pushables: createPushables(room.getMovableEntities()),
+    spikeBalls: createSpikeBalls(room.getSpikeBalls()),
     dayNight: createDayNightState(),
     game,
     roomObjects: startObjects,
@@ -190,6 +200,7 @@ async function main() {
     // (voir transitionRoom() pour ce cas).
     state.obstacles = buildObstacles(state.room.getEntities());
     state.pushables = createPushables(state.room.getMovableEntities());
+    state.spikeBalls = createSpikeBalls(state.room.getSpikeBalls());
     state.guards = await loadGuards(roomId);
     state.roomObjects = await loadRoomObjects(
       gl,
@@ -232,6 +243,10 @@ async function main() {
       // la nouvelle salle (fn_room_init). Un coffre poussé n'est donc pas un
       // état persistant à sauvegarder.
       state.pushables = createPushables(state.room.getMovableEntities());
+      // Les boules repartent du plafond : la ROM ne restaure pas leur `grid_z`
+      // non plus, c'est la ré-instanciation de la salle qui le fait. D'où
+      // l'impression, en jeu, qu'elles tombent quand on entre dans une pièce.
+      state.spikeBalls = createSpikeBalls(state.room.getSpikeBalls());
       state.guards = await loadGuards(targetRoomId);
       state.roomObjects = await loadRoomObjects(
         gl,
@@ -281,7 +296,9 @@ async function main() {
       // Les corps mobiles sont des obstacles À LEUR POSITION COURANTE : la
       // liste est reconstruite à chaque tick, elle ne peut pas être mise en
       // cache avec le décor.
-      const obstacles = state.obstacles.concat(pushableObstacles(state.pushables));
+      const obstacles = state.obstacles
+        .concat(pushableObstacles(state.pushables))
+        .concat(spikeBallObstacles(state.spikeBalls));
 
       // AVANT le joueur : c'est le cycle qui pose la demande de
       // transformation, et le joueur la consomme dans le même tick s'il le
@@ -307,6 +324,7 @@ async function main() {
       // précisément cet ordre qui décide du comportement du bloc 0x3E (voir
       // physics/solidTypes.ts).
       updatePushables(state.pushables, state.obstacles, bounds);
+      updateSpikeBalls(state.spikeBalls, state.obstacles, bounds);
 
       const crossing = detectEdgeCrossing(state.player);
       if (crossing) {
@@ -341,6 +359,7 @@ async function main() {
       ...state.guards.flatMap((guard) => guardDrawCalls(guard, state.view)),
       ...pushableDrawCalls(state.pushables, state.view),
       ...objectDrawCalls(state.roomObjects, state.view),
+      ...spikeBallDrawCalls(state.spikeBalls, state.view),
     ];
     renderer.draw(state.camera.getView(), state.camera.getProjection(aspect), drawCalls);
     drawTopView(

@@ -32,7 +32,7 @@ import { pushPolicyFor, type PushPolicy } from "../physics/solidTypes";
 import type { SpriteDrawCall } from "../gl/spriteBatch";
 import type { ViewAngle } from "../render/isoMath";
 import { entityDrawCall, type ResolvedEntity } from "./room";
-import { clampDeltaToRoom, type RoomBound } from "../physics/roomBounds";
+import { clampDeltaToRoom, clampDeltaToFloor, type RoomBound } from "../physics/roomBounds";
 
 export class PushableBody {
   gridX: number;
@@ -172,7 +172,7 @@ export function updatePushables(
     // et non la formule centrée des axes X/Y. Les trois calibrations de salle
     // donnent toutes 0x80, mais on lit quand même la valeur de la salle plutôt
     // que d'écrire la constante -- c'est la même donnée que les bornes X/Y.
-    const floorLimited = Math.max(body.pendingZ, bounds.z - body.gridZ);
+    const floorLimited = clampDeltaToFloor(body.gridZ, body.pendingZ, bounds.z);
     const zRes = resolveAxis(body.box(), floorLimited, "z", obstacles);
     body.gridZ += zRes.delta;
 

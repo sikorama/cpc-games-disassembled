@@ -62,6 +62,28 @@ export function boundsForRoom(roomId: number): RoomBound {
   return roomBoundsData.bounds[index] ?? DEFAULT_BOUND;
 }
 
+/**
+ * Réduit `delta` pour que l'entité ne passe pas sous le plancher de la salle.
+ *
+ * `fn_entity_clamp_pending_z` (#230C) est un PLANCHER simple, pas la formule
+ * centrée des axes X/Y : `grid_z + delta` comparé à `var_room_data_field_2`,
+ * sans valeur absolue et sans plafond.
+ *
+ * TOUCHER LE PLANCHER EST UNE COLLISION, et pas seulement un écrêtage : la
+ * routine fait `set 2,(ix+off_cooldown_or_collision_flags)` à chaque pas de
+ * réduction -- le même bit que pose le scan de collision solide. C'est ce qui
+ * permet à une boule à pics tombée dans le vide de se désarmer en atteignant le
+ * sol, exactement comme si elle avait heurté un bloc. Un simple `Math.max` ici
+ * perdrait cette information, et la boule resterait « en chute » à jamais,
+ * verrou de salle compris (bug attrapé au test, 2026-09-05).
+ *
+ * L'appelant compare donc le retour à ce qu'il a demandé pour savoir s'il a
+ * touché.
+ */
+export function clampDeltaToFloor(gridZ: number, delta: number, floor: number): number {
+  return Math.max(delta, floor - gridZ);
+}
+
 /** `fn_step_toward_zero` (#233B) : réduit de 1 vers zéro, exactement. */
 function stepTowardZero(value: number): number {
   if (value === 0) return 0;

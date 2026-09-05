@@ -8,6 +8,7 @@ import { loadSpriteIndex, type SpriteIndex } from "../data/spriteManifest";
 import type { RoomEntity } from "../data/types";
 import { pushPolicyFor } from "../physics/solidTypes";
 import { OBJECT_TYPE_BASE, OBJECT_TYPE_COUNT } from "../game/objectCatalog";
+import { SPIKE_BALL_TYPE } from "./spikeBalls";
 
 /** Entité résolue (texture chargée), indépendante de l'angle de vue --
  * séparée des draw calls pour que changer d'angle soit un simple recalcul
@@ -31,6 +32,10 @@ export interface ResolvedEntity {
    * rotation 1. C'est game/objectCatalog.ts qui décide, et scene/objects.ts
    * qui dessine. */
   isCatalogObject: boolean;
+  /** Boule à pics du plafond (0x3F) : entité VIVANTE, pas du décor -- elle
+   * tombe. Sortie du rendu statique et redessinée à sa position courante par
+   * scene/spikeBalls.ts. */
+  isSpikeBall: boolean;
 }
 
 /**
@@ -106,6 +111,12 @@ export class LoadedRoom {
     return this.entities.filter((e) => e.isMovable);
   }
 
+  /** Boules à pics de la salle -- sprite déjà chargé, pour que
+   * scene/spikeBalls.ts les fasse tomber sans repasser par le SpriteIndex. */
+  getSpikeBalls(): ResolvedEntity[] {
+    return this.entities.filter((e) => e.isSpikeBall);
+  }
+
   /**
    * Construit les draw calls pour un angle de vue donné. Toute la logique
    * des 4 angles tient ici : on tourne les COORDONNÉES DE GRILLE avant
@@ -127,7 +138,7 @@ export class LoadedRoom {
     let maxY = -Infinity;
 
     for (const resolved of this.entities) {
-      const { entity, width, height, isWall, isMovable, isCatalogObject } = resolved;
+      const { entity, width, height, isWall, isMovable, isCatalogObject, isSpikeBall } = resolved;
       if (hideWalls && isWall) continue;
       // Les objets ne participent même pas au cadrage : leur emplacement du
       // manifest appartient à une autre partie que celle qui se joue.
@@ -147,7 +158,10 @@ export class LoadedRoom {
       minY = Math.min(minY, projected.y + call.projOffset[1]);
       maxY = Math.max(maxY, projected.y + call.projOffset[1] + height);
 
-      if (isMovable) continue;
+      // Les boules comptent pour le CADRAGE à leur position de départ -- comme
+      // les corps mobiles -- mais leur draw call vient de scene/spikeBalls.ts,
+      // à leur position courante.
+      if (isMovable || isSpikeBall) continue;
       drawCalls.push(call);
     }
 
@@ -233,6 +247,7 @@ export async function loadRoom(gl: WebGL2RenderingContext, roomId: number): Prom
       isWall: isWallType(entity.type),
       isMovable: pushPolicyFor(entity.type, entity.flags) !== null,
       isCatalogObject: isCatalogObjectType(entity.type),
+      isSpikeBall: entity.type === SPIKE_BALL_TYPE,
     });
   }
 
