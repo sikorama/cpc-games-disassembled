@@ -8,7 +8,7 @@ import { loadRoom, type LoadedRoom, type RoomView } from "./scene/room";
 import { createKeyboardState, type KeyboardState } from "./input/keyboard";
 import { buildObstacles, type Obstacle } from "./physics/obstacles";
 import { boundsForRoom } from "./physics/roomBounds";
-import { boxesOverlap } from "./physics/aabb";
+import { boxesOverlap, type Box3 } from "./physics/aabb";
 import {
   createLivesState,
   loseLife,
@@ -64,8 +64,10 @@ import {
   useAndRotate,
   isGraspable,
   displayedSlots,
-  heldObject,
   objectName,
+  OBJECT_HALF_EXTENT,
+  OBJECT_HEIGHT,
+  type HeldObject,
   type InventoryState,
 } from "./game/inventory";
 import {
@@ -395,7 +397,7 @@ async function main() {
       const intent = readIntent(state.controlMode, state.input);
       // AVANT updatePlayer, comme la ROM place fn_player_use_held_object avant
       // fn_player_jump_trigger : les deux boutons peuvent agir dans le même tick.
-      useHeldObject(state, intent);
+      useHeldObject(state, intent, obstacles);
       updatePlayer(state.player, intent, obstacles, state.dayNight);
       for (const guard of state.guards) {
         updateGuard(guard, obstacles, bounds);
@@ -508,43 +510,72 @@ async function main() {
  */
 const GRASP_REACH = 4;
 
-/** Demi-étendue d'un objet posé, pour le test de portée. */
-const OBJECT_HALF_EXTENT = 8;
+/** Emplacements d'objets d'une salle : la ROM balaie les slots d'entité 2 et 3
+ * (`ld iy,#010F`, `ld b,#02`). Une salle ne peut donc pas contenir plus de deux
+ * objets -- et pas plus d'UN dans la salle 0x88, seul cas particulier du jeu
+ * (`cp #88 / jr nz / ld b,#01`). Sans emplacement libre, on ne peut rien poser. */
+const ROOM_OBJECT_SLOTS = 2;
+const ROOM_OBJECT_SLOTS_EXCEPTION = { room: 0x88, slots: 1 };
 
-function objectBox(o: RoomObject) {
-  const { gridX, gridY, gridZ } = o.placed;
+function roomObjectCapacity(roomId: number): number {
+  return roomId === ROOM_OBJECT_SLOTS_EXCEPTION.room
+    ? ROOM_OBJECT_SLOTS_EXCEPTION.slots
+    : ROOM_OBJECT_SLOTS;
+}
+
+function objectBox(placed: { gridX: number; gridY: number; gridZ: number }): Box3 {
   return {
-    minX: gridX - OBJECT_HALF_EXTENT,
-    maxX: gridX + OBJECT_HALF_EXTENT,
-    minY: gridY - OBJECT_HALF_EXTENT,
-    maxY: gridY + OBJECT_HALF_EXTENT,
-    minZ: gridZ,
-    maxZ: gridZ + OBJECT_HALF_EXTENT,
+    minX: placed.gridX - OBJECT_HALF_EXTENT,
+    maxX: placed.gridX + OBJECT_HALF_EXTENT,
+    minY: placed.gridY - OBJECT_HALF_EXTENT,
+    maxY: placed.gridY + OBJECT_HALF_EXTENT,
+    minZ: placed.gridZ,
+    maxZ: placed.gridZ + OBJECT_HEIGHT,
   };
 }
 
 /**
- * L'UNIQUE action du jeu sur les objets : prendre celui qui est à portée,
- * décaler l'inventaire d'un cran, et poser celui qui en sort.
+ * Y a-t-il un solide juste au-dessus du joueur ?
  *
- * Il n'y a ni ramassage par contact (le contact POUSSE, les objets portant le
- * bit poussable), ni bouton pour lâcher, ni usage d'objet. Un seul geste, qui
- * fait les trois.
- *
- * CONDITIONS, reprises de #18AA dans l'ordre : être dans le champ, ne pas être
- * en train de sauter (`bit 3`), et être posé au sol (`bit 2`). Appelée AVANT
- * updatePlayer, comme la ROM appelle fn_player_use_held_object avant
- * fn_player_jump_trigger -- c'est ce qui permet de ramasser et sauter dans le
- * même tick.
+ * FAIT ROM : la routine monte temporairement le joueur de `+0x0C`, sonde un
+ * support solide, le redescend, et note le résultat dans `#0097`. Ce drapeau
+ * INTERDIT ensuite de poser -- mais uniquement dans la branche « rien à
+ * portée », pas quand on échange un objet contre un autre. Poser demande de la
+ * place ; échanger sur place n'en demande pas.
  */
-function useHeldObject(state: AppState, intent: MoveIntent): void {
+function blockedAbove(player: PlayerState, obstacles: Obstacle[]): boolean {
+  const box = playerBox(player);
+  const raised: Box3 = { ...box, minZ: box.minZ + 0x0c, maxZ: box.maxZ + 0x0c };
+  return obstacles.some((o) => boxesOverlap(raised, o.box));
+}
+
+/**
+ * L'UNIQUE action du jeu sur les objets : ce qui est à portée entre dans
+ * l'inventaire, tout se décale d'un cran, et ce qui sort est POSÉ.
+ *
+ * DEUX BRANCHES, et j'avais oublié la seconde (signalé en jouant : « je ne
+ * peux pas le poser ») :
+ *
+ * - un objet est à portée -> il entre, et ce qui sort le remplace SUR PLACE,
+ *   dans le slot d'entité qu'on vient de libérer ;
+ * - rien à portée -> le décalage a lieu QUAND MÊME, et ce qui sort est posé
+ *   aux pieds du joueur, dans un slot d'entité libre. C'est le seul moyen de
+ *   se débarrasser d'un objet, et ça explique qu'appuyer à mains vides ne soit
+ *   pas neutre.
+ *
+ * CONDITIONS (#18AA, dans l'ordre) : être dans le champ, ne pas être en train
+ * de sauter (`bit 3`), être posé au sol (`bit 2`). Appelée AVANT updatePlayer,
+ * comme la ROM appelle cette routine avant fn_player_jump_trigger -- c'est ce
+ * qui permet de ramasser et sauter dans le même tick.
+ */
+function useHeldObject(state: AppState, intent: MoveIntent, obstacles: Obstacle[]): void {
   if (!intent.use) return;
   const player = state.player;
   if (player.materialize || player.transform) return;
   if (player.jumping || player.airborne) return;
 
   const box = playerBox(player);
-  const reach = {
+  const reach: Box3 = {
     minX: box.minX - GRASP_REACH,
     maxX: box.maxX + GRASP_REACH,
     minY: box.minY - GRASP_REACH,
@@ -555,42 +586,45 @@ function useHeldObject(state: AppState, intent: MoveIntent): void {
 
   // Seuls 0x60-0x66 : la vie bonus 0x67 n'est pas préhensible (`sub #60 / cp #07`).
   const index = state.roomObjects.findIndex(
-    (o) => isGraspable(o.placed.type) && boxesOverlap(reach, objectBox(o)),
+    (o) => isGraspable(o.placed.type) && boxesOverlap(reach, objectBox(o.placed)),
   );
-  if (index < 0) return;
 
-  const target = state.roomObjects[index]!;
-  const evicted = useAndRotate(state.inventory, {
-    type: target.placed.type,
-    flags: 0,
-    catalogSlot: target.placed.catalogSlot,
-  });
-
-  // L'ENTRÉE DE CATALOGUE DE L'OBJET PRIS EST INVALIDÉE. La ROM écrit un zéro
-  // à travers le pointeur qu'elle vient de lire (`ld (de),a`), avant même de
-  // toucher à l'inventaire. Sans ça le portage recréerait l'objet depuis le
-  // catalogue à chaque retour dans la salle : on pourrait en récolter à
-  // l'infini en faisant l'aller-retour par une porte.
-  state.game.catalog = state.game.catalog.filter((p) => p.catalogSlot !== target.placed.catalogSlot);
-
-  if (evicted) {
-    // L'objet chassé de l'inventaire est POSÉ, et précisément à la place de
-    // celui qu'on vient de prendre : la ROM écrit son type dans le slot
-    // d'entité qu'elle est en train de libérer, un seul slot servant aux deux.
-    target.placed.type = evicted.type;
-    // Il reprend SON propre emplacement de catalogue, celui qu'il traînait
-    // depuis son ramassage -- c'est à ça que sert le pointeur conservé dans
-    // l'enregistrement d'inventaire. `fn_object_catalog_writeback` (#1E67)
-    // resynchronisera sa position en quittant la salle, donc il persiste là où
-    // on l'a laissé.
-    if (evicted.catalogSlot !== null) {
-      target.placed.catalogSlot = evicted.catalogSlot;
-      state.game.catalog.push({ ...target.placed });
-    }
-  } else {
-    // Rien ne sort : la salle perd simplement son objet.
+  let entering: HeldObject | null = null;
+  if (index >= 0) {
+    const target = state.roomObjects[index]!;
+    entering = { type: target.placed.type, flags: 0, catalogSlot: target.placed.catalogSlot };
+    // L'entrée de catalogue est invalidée : la ROM écrit un zéro à travers le
+    // pointeur qu'elle vient de lire. Sans ça, l'objet réapparaîtrait à chaque
+    // retour dans la salle -- on en récolterait à l'infini par une porte.
+    state.game.catalog = state.game.catalog.filter(
+      (p) => p.catalogSlot !== target.placed.catalogSlot,
+    );
     state.roomObjects.splice(index, 1);
+  } else {
+    // Rien à portée : on ne peut poser que s'il reste un emplacement d'objet
+    // dans la salle, ET qu'il y a de la place au-dessus du joueur. Les deux
+    // refus abandonnent l'action entière, sans décaler l'inventaire.
+    if (state.roomObjects.length >= roomObjectCapacity(state.roomId)) return;
+    if (blockedAbove(player, obstacles)) return;
   }
+
+  const evicted = useAndRotate(state.inventory, entering);
+  if (!evicted) return;
+
+  // CE QUI SORT EST POSÉ, aux coordonnées du joueur : la ROM y recopie ses
+  // grid_x/y/z par un `ldir` de 3 octets. L'objet reprend SON propre
+  // emplacement de catalogue -- c'est à ça que sert le pointeur conservé dans
+  // l'enregistrement -- donc il persiste là où on l'a laissé.
+  const dropped = {
+    catalogSlot: evicted.catalogSlot ?? -1,
+    type: evicted.type,
+    gridX: player.gridX,
+    gridY: player.gridY,
+    gridZ: player.gridZ,
+    room: state.roomId,
+  };
+  state.roomObjects.push({ placed: dropped });
+  if (evicted.catalogSlot !== null) state.game.catalog.push({ ...dropped });
 }
 
 /**
@@ -695,12 +729,9 @@ function updateHud(state: AppState): void {
     : String(livesRemaining(state.lives));
   document.getElementById("hud-seed")!.textContent =
     `${state.game.seed.toString(16)} (départ 0x${state.game.startRoom.toString(16)})`;
-  const held = heldObject(state.inventory);
-  const slots = displayedSlots(state.inventory)
+  document.getElementById("hud-inventory")!.textContent = displayedSlots(state.inventory)
     .map((r) => (r ? objectName(r.type) : "-"))
     .join(" | ");
-  document.getElementById("hud-inventory")!.textContent =
-    `${held ? objectName(held.type) : "rien"}  [${slots}]`;
   document.getElementById("hud-objects")!.textContent = state.roomObjects.length
     ? state.roomObjects.map((o) => `0x${o.placed.type.toString(16)}`).join(" ")
     : "aucun";

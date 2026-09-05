@@ -1,28 +1,28 @@
 // Inventaire d'objets et action « utiliser ».
 //
-// UNE SEULE ACTION EXISTE dans le jeu, et « utiliser » la résume : on prend
-// l'objet à portée, toute la pile se décale d'un cran, et celui qui sort par le
-// bout est POSÉ. Il n'y a pas de ramassage séparé, pas de bouton « lâcher »,
-// pas d'usage d'objet. Le contact, lui, ne ramasse rien — il POUSSE, les
-// objets portant le bit poussable comme les meubles.
+// UNE SEULE ACTION EXISTE dans le jeu, et « utiliser » la résume : ce qui est à
+// portée entre dans l'inventaire, tout se décale d'un cran, et ce qui sort par
+// le bout est POSÉ. Il n'y a pas de ramassage séparé, pas de bouton « lâcher »,
+// pas d'usage d'objet. Le contact, lui, ne ramasse rien — il POUSSE, les objets
+// portant le bit poussable comme les meubles.
 //
-// STRUCTURE ROM : une pile de 4 enregistrements de 4 octets en RAM basse.
+// L'INVENTAIRE, C'EST TROIS EMPLACEMENTS. #00AB, #00AF et #00B3, ceux que le
+// HUD affiche. #00A7 n'en fait PAS partie malgré les apparences : c'est un
+// octet de travail. `fn_player_use_held_object` (#18AA) y écrit l'objet
+// entrant, puis le `lddr` le décale immédiatement vers #00AB et la routine
+// remet #00A7 à zéro. Il ne survit pas à l'opération, donc il n'y a pas
+// d'« objet en main » distinct des trois emplacements -- première lecture
+// corrigée le 2026-09-05.
 //
-//     #00A7  objet EN MAIN      (type, flags, pointeur catalogue sur 2 octets)
-//     #00AB  emplacement 1  ]
-//     #00AF  emplacement 2   }- les 3 icônes affichées au HUD
-//     #00B3  emplacement 3  ]
+// LE DÉCALAGE TIENT EN UNE INSTRUCTION :
 //
-// `fn_player_use_held_object` (#18AA) fait le décalage avec UNE instruction :
-// `ld hl,#00B2 / ld de,#00B6 / ld bc,#000C / lddr` -- une copie descendante de
-// 12 octets, soit 3 enregistrements, qui pousse tout d'un cran vers le fond et
-// écrase celui de #00B3. Le nouvel objet est écrit en #00A7 et les 4 octets de
-// tête sont remis à zéro quand la pile était vide.
+//     ld hl,#00B2 / ld de,#00B6 / ld bc,#000C / lddr
 //
-// C'est pour ça que l'objet sortant est posé AU MÊME ENDROIT que celui qu'on
-// vient de prendre : juste avant le décalage, la routine écrit son type dans le
-// slot d'entité qu'on est en train de libérer (`ld (iy+off_type),a`). Un seul
-// slot sert aux deux, donc l'échange est nécessairement sur place.
+// une copie descendante de 12 octets (3 enregistrements de 4) qui pousse tout
+// vers le fond et écrase celui de #00B3. Elle est exécutée dans les DEUX cas --
+// qu'on ait pris quelque chose ou non. Presser la touche sans rien à portée
+// décale donc quand même, et pose ce qui sort : c'est ainsi qu'on se
+// débarrasse d'un objet.
 
 /** Un enregistrement d'inventaire. Le pointeur catalogue est conservé parce
  * que la ROM le conserve : c'est par lui que l'entrée du catalogue est
@@ -37,9 +37,17 @@ export interface HeldObject {
   catalogSlot: number | null;
 }
 
-/** Emplacements affichés au HUD, hors objet en main. `fn_hud_slot_notification`
- * (#1802) en redessine exactement 3, en lisant #00AB par pas de 4. */
+/** L'inventaire entier. `fn_hud_slot_notification` (#1802) en redessine
+ * exactement 3, en lisant #00AB par pas de 4 -- et ces trois-là sont tout ce
+ * que le joueur possède. */
 export const INVENTORY_SLOTS = 3;
+
+/** Demi-étendues et hauteur d'un objet posé, écrites en clair par la ROM au
+ * moment de le reposer : `ld (iy+off_bbox_w),#05 / bbox_h,#05 / bbox_d,#0C`
+ * (loc_19A5). Ce n'est donc plus une valeur inventée -- elle sert aussi de
+ * boîte pour le test de portée. */
+export const OBJECT_HALF_EXTENT = 5;
+export const OBJECT_HEIGHT = 0x0c;
 
 /** Seuls 0x60-0x66 sont préhensibles : `ld a,(iy+off_type) / sub #60 / cp #07 /
  * ret nc`. La vie bonus 0x67 en est donc EXCLUE -- elle se ramasse toute seule
@@ -58,41 +66,43 @@ export function isGraspable(type: number): boolean {
  * l'occasion parfaite d'introduire un écart d'une case.
  */
 export interface InventoryState {
-  /** Index 0 = en main, 1..3 = les emplacements affichés. `null` = vide. */
+  /** Les 3 emplacements, du plus récent au plus ancien. `null` = vide. */
   records: (HeldObject | null)[];
 }
 
 export function createInventoryState(): InventoryState {
-  return { records: Array<HeldObject | null>(INVENTORY_SLOTS + 1).fill(null) };
+  return { records: Array<HeldObject | null>(INVENTORY_SLOTS).fill(null) };
 }
 
-/** Ce que le HUD affiche : les 3 emplacements, sans l'objet en main. */
+/** Ce que le HUD affiche -- c'est-à-dire tout l'inventaire. */
 export function displayedSlots(inv: InventoryState): (HeldObject | null)[] {
-  return inv.records.slice(1);
-}
-
-/** L'objet en main, celui qu'on vient de prendre. */
-export function heldObject(inv: InventoryState): HeldObject | null {
-  return inv.records[0] ?? null;
+  return inv.records;
 }
 
 /**
- * Prend `picked` et décale la pile d'un cran.
+ * Décale l'inventaire d'un cran et renvoie ce qui en SORT.
  *
- * Renvoie l'objet CHASSÉ du dernier emplacement, que l'appelant doit poser dans
- * le monde -- ou `null` si la pile n'était pas pleine. C'est exactement ce que
- * fait le `lddr` : il n'y a pas de test de saturation, l'enregistrement du
- * fond est écrasé, et s'il valait zéro rien n'est posé.
+ * `entering` vaut `null` quand rien n'était à portée : le décalage a lieu quand
+ * même, l'emplacement de tête devient vide, et l'objet du fond ressort. C'est
+ * le seul moyen de se débarrasser de quelque chose, et c'est pour ça que
+ * presser la touche à mains vides n'est pas une opération neutre.
  *
- * Ne prend AUCUNE décision de gameplay : ni la portée, ni le droit d'agir, ni
- * l'endroit où poser. La ROM non plus -- tout ça est décidé avant l'appel.
+ * L'objet renvoyé doit être POSÉ par l'appelant. Il n'y a pas de test de
+ * saturation dans la ROM : le `lddr` écrase le dernier enregistrement, et s'il
+ * était vide il ne sort rien.
+ *
+ * Ne prend aucune décision de gameplay -- ni la portée, ni le droit d'agir, ni
+ * l'endroit où poser. La ROM non plus : tout ça est décidé avant.
  */
-export function useAndRotate(inv: InventoryState, picked: HeldObject): HeldObject | null {
-  const evicted = inv.records[INVENTORY_SLOTS] ?? null;
-  for (let i = INVENTORY_SLOTS; i > 0; i--) {
+export function useAndRotate(
+  inv: InventoryState,
+  entering: HeldObject | null,
+): HeldObject | null {
+  const evicted = inv.records[INVENTORY_SLOTS - 1] ?? null;
+  for (let i = INVENTORY_SLOTS - 1; i > 0; i--) {
     inv.records[i] = inv.records[i - 1] ?? null;
   }
-  inv.records[0] = picked;
+  inv.records[0] = entering;
   return evicted;
 }
 

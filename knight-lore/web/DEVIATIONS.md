@@ -114,24 +114,6 @@ exclus) qu'aucune observation ne révélerait tant qu'on ne les cherche pas.
 *À trancher* : point d'arrêt en ÉCRITURE sur `#0080` pendant une mort réelle.
 L'adresse qui écrit donne le déclencheur d'un coup, et cette entrée disparaît.
 
-### Portée de préhension approximative
-Le portage teste la préhension avec une demi-étendue d'objet inventée (8
-unités), contre la boîte du joueur agrandie de 4.
-
-*Fait ROM* : l'agrandissement de +4 en largeur, hauteur ET profondeur est
-exact (`fn_player_use_held_object` #18AA l'applique puis le restaure). Ce qui
-manque est la boîte de l'OBJET : les entités 0x60-0x66 n'ont pas de
-`bbox_w/h/d` dans le manifest — ces champs ne sont extraits que pour le décor
-de jonction (murs et portes). La ROM, elle, teste contre la vraie boîte de
-l'objet.
-
-*Conséquence* : la distance à laquelle on attrape un objet peut différer de
-l'original, dans un sens ou dans l'autre. Rien d'autre n'en dépend — ni ce
-qu'on attrape, ni ce qui se passe ensuite.
-
-*À résorber* : extraire `bbox_w/h/d` pour les types d'objets, comme
-`tools/room_map/enrich_bbox.py` le fait déjà pour les jonctions.
-
 ### Formes de collision par entité (sphère pour les ennemis ronds)
 Prévu, pas encore implémenté.
 
