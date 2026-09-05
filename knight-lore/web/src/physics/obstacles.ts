@@ -254,6 +254,19 @@ function buildSideWalls(entities: RoomEntity[], doors: RoomEntity[]): Obstacle[]
       side.edge,
     );
 
+    // ÉPAISSEUR RÉELLE, plutôt que le repli. Les murs portent leur vraie bbox
+    // (table de jonction, extraite par tools/room_map/enrich_bbox.py) et elle
+    // n'est PAS uniforme : demi-épaisseur 8 pour 0x0F/0x80, 12 pour 0x0B/0x0C,
+    // 20 pour 0x0A. Utiliser 8 partout rendait les murs épais trop MINCES, donc
+    // franchissables de quelques unités de trop dans les salles concernées.
+    // On prend le mode des valeurs réelles du côté, pour la même raison que
+    // `runCoord` : un segment isolé mal renseigné ne doit pas décider pour tout
+    // le côté.
+    const thicknesses = onSide
+      .map((w) => (side.axis === "x" ? w.bboxW : w.bboxH))
+      .filter((v): v is number => v !== undefined && v > 0);
+    const halfExtent = thicknesses.length > 0 ? modeCoordinate(thicknesses, side.edge) : WALL_HALF_EXTENT;
+
     const doorsOnSide = doors.filter((d) => (side.axis === "x" ? d.gridX === side.edge : d.gridY === side.edge));
     const gaps: [number, number][] = doorsOnSide.map((d) => {
       const perp = side.axis === "x" ? d.gridY : d.gridX;
@@ -265,8 +278,8 @@ function buildSideWalls(entities: RoomEntity[], doors: RoomEntity[]): Obstacle[]
       const box: Box3 =
         side.axis === "x"
           ? {
-              minX: runCoord - WALL_HALF_EXTENT,
-              maxX: runCoord + WALL_HALF_EXTENT,
+              minX: runCoord - halfExtent,
+              maxX: runCoord + halfExtent,
               minY: a,
               maxY: b,
               minZ: WALL_MIN_Z,
@@ -275,8 +288,8 @@ function buildSideWalls(entities: RoomEntity[], doors: RoomEntity[]): Obstacle[]
           : {
               minX: a,
               maxX: b,
-              minY: runCoord - WALL_HALF_EXTENT,
-              maxY: runCoord + WALL_HALF_EXTENT,
+              minY: runCoord - halfExtent,
+              maxY: runCoord + halfExtent,
               minZ: WALL_MIN_Z,
               maxZ: WALL_MAX_Z,
             };
