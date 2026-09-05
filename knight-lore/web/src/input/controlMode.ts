@@ -45,10 +45,19 @@ const EMPTY: MoveIntent = { targets: [], turn: 0, advance: false, jump: false };
 function directionalIntent(input: KeyboardState): MoveIntent {
   let dx = 0;
   let dy = 0;
+  // `dx`/`dy` sont des intentions d'axe MONDE, pas écran -- c'est ce qui rend
+  // les quatre lignes lisibles ensemble et ce qui fixe le sens des deux
+  // ternaires plus bas.
+  //
+  // L'axe Y était branché à l'envers (corrigé 2026-09-05, signalé en jouant) :
+  // « haut » produisait -Y. Les deux touches verticales sont donc échangées.
+  // Ce n'est pas un fait ROM mais un choix d'affectation de touches -- le jeu
+  // d'origine mappe des directions de joystick, et quelle touche du clavier
+  // porte quelle direction du monde est une question de portage.
   if (input.isDown("a") || input.isDown("arrowleft")) dx -= 1;
   if (input.isDown("d") || input.isDown("arrowright")) dx += 1;
-  if (input.isDown("w") || input.isDown("arrowup")) dy -= 1;
-  if (input.isDown("s") || input.isDown("arrowdown")) dy += 1;
+  if (input.isDown("w") || input.isDown("arrowup")) dy += 1;
+  if (input.isDown("s") || input.isDown("arrowdown")) dy -= 1;
 
   const targets: Orientation[] = [];
   if (dx !== 0) targets.push(dx < 0 ? 0 : 1);
