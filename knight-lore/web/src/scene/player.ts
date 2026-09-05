@@ -16,6 +16,7 @@ import { resolveAxis } from "../physics/aabb";
 import type { Obstacle } from "../physics/obstacles";
 import type { MoveIntent } from "../input/controlMode";
 import { TICK_HZ } from "../game/tick";
+import type { DayNightState } from "../game/dayNight";
 import type { SpriteDrawCall } from "../gl/spriteBatch";
 import type { SpriteIndex } from "../data/spriteManifest";
 import { rotateGrid, viewNeedsFlip, type ViewAngle } from "../render/isoMath";
@@ -52,14 +53,48 @@ import {
 // simulée), mais il adresse désormais ses sprites par TYPE ROM via le
 // SpriteIndex -- plus aucun tableau d'URL écrit à la main.
 
-/** Base des types jambes du joueur (jour) : 0x10-0x15 = feet1-4 en
- * aller-retour, 0x18-0x1D = feet5-8. Le loup-garou (nuit) a sa propre base
- * 0x30 -- pas encore implémenté (dette, voir web/DEVIATIONS.md). */
-const PLAYER_LEGS_BASE = 0x10;
+/** Base des types jambes du joueur, JOUR : 0x10-0x15 = feet1-4 en
+ * aller-retour, 0x18-0x1D = feet5-8. */
+export const LEGS_BASE_DAY = 0x10;
 
-/** Base des types corps du joueur (jour) : `jambes + 0x10`, exactement la
- * relation qu'applique la ROM. */
-const PLAYER_BODY_BASE = 0x20;
+/** Base des types jambes, NUIT (loup-garou) : la même structure décalée de
+ * `FORM_XOR`, trous compris. Les slots 6/7 (0x36/0x37) ne sont PAS des jambes
+ * -- ce sont les blocs mobiles ; côté jour, ce sont la statue de crapaud et le
+ * tapis à clous (0x16/0x17). Voir docs/METHODOLOGY.md §25bis : ces quatre
+ * codes par bloc de 16 sont inatteignables par le cycle de marche (6 phases
+ * seulement) et le jeu les a tous recyclés. */
+export const LEGS_BASE_NIGHT = 0x30;
+
+/** La transformation jour/nuit est un `XOR #20` sur le type
+ * (`fn_player_transform_complete` #1C24). Pas une table, pas un état séparé :
+ * un seul bit du type porte la forme, ce qui est aussi pourquoi les deux
+ * plages ont exactement la même structure. */
+const FORM_XOR = 0x20;
+
+/** Le corps est toujours `jambes + 0x10` -- écrit tel quel par la ROM, à deux
+ * endroits qui doivent rester d'accord : chaque frame par
+ * `fn_entity_materialize_dispatch_a` et une fois en fin de transformation
+ * (`add a,#10 / ld (ix+off_type_mirror_plus_10),a`, #1C24). Jour 0x10 -> 0x20,
+ * nuit 0x30 -> 0x40. */
+const BODY_FROM_LEGS = 0x10;
+
+/** Les 4 types transitoires affichés PENDANT la transformation
+ * (`fn_player_transform_tick`, #1BE1). */
+const TRANSFORM_TYPE_BASE = 0x5c;
+const TRANSFORM_TYPE_COUNT = 4;
+
+/** Sous-étapes de la transformation : `(ix+off_transform_step_counter) = 8`
+ * au déclenchement, décrémenté 1 frame sur 4 -- soit **32 ticks** en tout. */
+const TRANSFORM_STEPS = 8;
+const TRANSFORM_THROTTLE = 4;
+
+/** Ticks pendant lesquels une transformation est refusée après un
+ * franchissement de porte. FAIT ROM : la transition de salle fait `or #30` sur
+ * le quartet HAUT de `cooldown_or_collision_flags` (+0x0C,
+ * asm/code/doors_and_player_logic.asm:761-763), et le corps de la logique
+ * joueur lui retire 0x10 par frame en saturant à zéro (:230-233). Trois
+ * frames, donc -- et le déclencheur exige ce quartet nul (`and #F0 / ret nz`). */
+const TRANSFORM_COOLDOWN_ON_DOOR = 3;
 
 /** Élévation du corps au-dessus des jambes, en unités de grille Z.
  * CONFIRMÉ : `+0x0C` posé par fn_entity_materialize_dispatch_a
@@ -70,12 +105,12 @@ const PLAYER_BODY_BASE = 0x20;
  * (physics/obstacles.ts BLOCK_HEIGHT, gridZ 0x80 -> 0x8C -> 0x98). */
 const BODY_Z_OFFSET = 0x0c;
 
-function legsTypeFor(bit: number, phase: number): number {
-  return PLAYER_LEGS_BASE | (bit << 3) | phase;
+function legsTypeFor(legsBase: number, bit: number, phase: number): number {
+  return legsBase | (bit << 3) | phase;
 }
 
-function bodyTypeFor(bit: number, phase: number): number {
-  return PLAYER_BODY_BASE | (bit << 3) | phase;
+function bodyTypeFor(legsBase: number, bit: number, phase: number): number {
+  return (legsBase + BODY_FROM_LEGS) | (bit << 3) | phase;
 }
 
 /** Pas du joueur, en unités de grille par TICK, sur UN SEUL axe.
@@ -112,6 +147,45 @@ const PLAYER_HEIGHT = 24;
 /** Frames indexées [bit de jeu de sprites][phase 0-5]. */
 type FrameSets = [LoadedFrame[], LoadedFrame[]];
 
+/** Les deux moitiés d'UNE forme (jour ou nuit). Les deux formes ont exactement
+ * la même structure -- c'est la conséquence directe du `XOR #20` : il n'y a
+ * qu'un jeu de règles, appliqué à deux jeux de dessins. */
+interface FormFrames {
+  bodyFrames: FrameSets;
+  legsFrames: FrameSets;
+}
+
+export interface PlayerFrames {
+  day: FormFrames;
+  night: FormFrames;
+  /** Les 4 types transitoires 0x5C-0x5F, affichés pendant la transformation.
+   * Un seul sprite, pas une paire corps/jambes -- voir `TransformState`. */
+  transform: LoadedFrame[];
+}
+
+/**
+ * Transformation en cours.
+ *
+ * PENDANT la transformation, le joueur n'est PAS un personnage en deux
+ * moitiés : `fn_player_transform_trigger` écrit `type = 0x01` dans le slot
+ * compagnon (`ld de,#001C / add ix,de / ld (ix+off_type),#01`), c'est-à-dire
+ * qu'il ÉTEINT le corps. Ce qui reste à l'écran est une figure unique, tirée
+ * des 4 types transitoires. C'est pour ça que cet état porte un seul type et
+ * pas un couple.
+ */
+export interface TransformState {
+  /** Sous-étapes restantes, de 8 à 0. */
+  stepsLeft: number;
+  /** Sous-cadence : une étape consommée toutes les 4. */
+  throttle: number;
+  /** Type transitoire courant, 0x5C-0x5F. */
+  type: number;
+  /** Forme visée, retenue au déclenchement. La ROM la garde dans
+   * `var_transform_flag_and_saved_type` (#0077) sous la forme du type
+   * d'AVANT, et applique le `XOR #20` seulement à la complétion. */
+  targetLegsBase: number;
+}
+
 export interface PlayerState {
   gridX: number;
   gridY: number;
@@ -120,8 +194,24 @@ export interface PlayerState {
   velY: number;
   velZ: number;
   airborne: boolean;
-  bodyFrames: FrameSets;
-  legsFrames: FrameSets;
+  /** Saut en cours -- DISTINCT de `airborne`, et la distinction vient de la
+   * ROM. Le drapeau est le bit 3 de `cooldown_or_collision_flags` (+0x0C),
+   * posé UNIQUEMENT par `fn_player_jump_trigger` (#21F0) et effacé à
+   * l'atterrissage en descente (#22A1). Marcher dans le vide depuis un rebord
+   * ne le pose donc jamais : on est `airborne` sans être `jumping`. La
+   * différence est observable, parce que le déclencheur de transformation
+   * teste ce bit-là et pas « en l'air ». */
+  jumping: boolean;
+  frames: PlayerFrames;
+  /** Forme courante : `LEGS_BASE_DAY` ou `LEGS_BASE_NIGHT`. C'est le seul
+   * état de forme -- corps et sprites en sont dérivés, comme en ROM où tout
+   * tient dans l'octet de type. */
+  legsBase: number;
+  /** Transformation en cours, ou `null`. */
+  transform: TransformState | null;
+  /** Quartet haut de `cooldown_or_collision_flags` (+0x0C), en ticks.
+   * Bloque la transformation juste après un franchissement de porte. */
+  transformCooldown: number;
   anim: WalkAnimState;
   /** Code d'orientation 0-3 (scene/orientation.ts). Contrairement au garde,
    * le joueur PORTE son orientation : elle persiste entre les frames sans
@@ -153,19 +243,36 @@ export interface PlayerState {
 export async function loadPlayerFrames(
   gl: WebGL2RenderingContext,
   spriteIndex: SpriteIndex,
-): Promise<{ bodyFrames: FrameSets; legsFrames: FrameSets }> {
+): Promise<PlayerFrames> {
   const phases = Array.from({ length: WALK_PHASE_COUNT }, (_, i) => i);
-  const [body0, body1, legs0, legs1] = await Promise.all([
-    loadFramesByType(gl, spriteIndex, phases.map((ph) => bodyTypeFor(0, ph)), "joueur (corps)"),
-    loadFramesByType(gl, spriteIndex, phases.map((ph) => bodyTypeFor(1, ph)), "joueur (corps)"),
-    loadFramesByType(gl, spriteIndex, phases.map((ph) => legsTypeFor(0, ph)), "joueur (jambes)"),
-    loadFramesByType(gl, spriteIndex, phases.map((ph) => legsTypeFor(1, ph)), "joueur (jambes)"),
+
+  /** Les deux moitiés d'une forme. La fonction ne connaît que la base des
+   * jambes : tout le reste (corps, bit de jeu, phase) en découle par les
+   * mêmes règles pour le jour et pour la nuit. */
+  async function loadForm(legsBase: number, who: string): Promise<FormFrames> {
+    const [body0, body1, legs0, legs1] = await Promise.all([
+      loadFramesByType(gl, spriteIndex, phases.map((ph) => bodyTypeFor(legsBase, 0, ph)), `${who} (corps)`),
+      loadFramesByType(gl, spriteIndex, phases.map((ph) => bodyTypeFor(legsBase, 1, ph)), `${who} (corps)`),
+      loadFramesByType(gl, spriteIndex, phases.map((ph) => legsTypeFor(legsBase, 0, ph)), `${who} (jambes)`),
+      loadFramesByType(gl, spriteIndex, phases.map((ph) => legsTypeFor(legsBase, 1, ph)), `${who} (jambes)`),
+    ]);
+    return { bodyFrames: [body0, body1], legsFrames: [legs0, legs1] };
+  }
+
+  // Les deux formes ET les étapes de transformation sont chargées d'avance :
+  // la transformation dure 32 ticks et ne peut pas attendre un `fetch`. Le
+  // cache de textures partagé rend le coût négligeable de toute façon.
+  const transformTypes = Array.from({ length: TRANSFORM_TYPE_COUNT }, (_, i) => TRANSFORM_TYPE_BASE + i);
+  const [day, night, transform] = await Promise.all([
+    loadForm(LEGS_BASE_DAY, "joueur"),
+    loadForm(LEGS_BASE_NIGHT, "loup-garou"),
+    loadFramesByType(gl, spriteIndex, transformTypes, "transformation"),
   ]);
-  return { bodyFrames: [body0, body1], legsFrames: [legs0, legs1] };
+  return { day, night, transform };
 }
 
 export function createPlayerState(
-  frames: { bodyFrames: FrameSets; legsFrames: FrameSets },
+  frames: PlayerFrames,
   spawn: { gridX: number; gridY: number; gridZ: number },
 ): PlayerState {
   return {
@@ -176,8 +283,12 @@ export function createPlayerState(
     velY: 0,
     velZ: 0,
     airborne: true, // résolu dès la première frame par la gravité/le sol
-    bodyFrames: frames.bodyFrames,
-    legsFrames: frames.legsFrames,
+    jumping: false,
+    frames,
+    // Le jeu démarre de JOUR (game/dayNight.ts) : forme humaine.
+    legsBase: LEGS_BASE_DAY,
+    transform: null,
+    transformCooldown: 0,
     anim: createWalkAnimState(),
     orientation: 1,
     turnCooldown: 0,
@@ -197,6 +308,84 @@ export function playerBox(player: PlayerState): Box3 {
     minZ: player.gridZ,
     maxZ: player.gridZ + PLAYER_HEIGHT,
   };
+}
+
+/**
+ * Tire le type transitoire de l'étape suivante, 0x5C-0x5F.
+ *
+ * FAIT ROM (`loc_1C04`) : `A = (var_pseudo_random_acc + R) & 3 | 0x5C`, puis
+ * `cp (ix+off_type) / jr nz / xor #01` -- soit « jamais deux fois le même
+ * d'affilée », obtenu en basculant le bit 0 si le tirage retombe sur le type
+ * courant. C'est cette dernière règle qui fait l'effet visuel (ça tremble) ;
+ * le tirage lui-même est de l'aléa.
+ *
+ * ÉCART ASSUMÉ (web/DEVIATIONS.md) : la SOURCE de l'aléa n'est pas portable --
+ * elle mélange le registre `R` du Z80 et un octet lu à une adresse dérivée du
+ * compteur de frames. On reproduit fidèlement la règle d'anti-répétition, qui
+ * est observable, et pas la séquence, qui ne l'est pas.
+ */
+function pickTransformType(current: number): number {
+  const draw = TRANSFORM_TYPE_BASE | (Math.floor(Math.random() * TRANSFORM_TYPE_COUNT) & 0x03);
+  return draw === current ? draw ^ 0x01 : draw;
+}
+
+/**
+ * Le déclencheur peut-il partir ce tick ?
+ *
+ * Les deux refus viennent de `fn_player_transform_trigger` (#1BB0) et sont
+ * testés dans cet ordre :
+ * - `and #F0 / ret nz` -- le quartet haut du cooldown doit être nul, ce qui
+ *   décale la transformation de 3 ticks après un franchissement de porte ;
+ * - `bit 3,(ix+0C) / ret nz` -- pas de transformation PENDANT UN SAUT. Le bit
+ *   n'est posé que par le saut, donc tomber d'un rebord ne l'empêche pas :
+ *   c'est bien `jumping` qu'on teste ici, pas `airborne`.
+ *
+ * La demande, elle, n'expire pas : elle reste en attente jusqu'à ce qu'elle
+ * puisse être servie (`var_transform_flag_and_saved_type` n'est remis à zéro
+ * que par la complétion, #1C24, ou par l'init de salle).
+ */
+function transformGateOpen(player: PlayerState): boolean {
+  return player.transformCooldown === 0 && !player.jumping;
+}
+
+/** Démarre la transformation et consomme la demande. */
+function startTransform(player: PlayerState, dayNight: DayNightState): void {
+  dayNight.transformRequested = false;
+  player.transform = {
+    stepsLeft: TRANSFORM_STEPS,
+    // Le tick de déclenchement tire DÉJÀ un type sans consommer d'étape : la
+    // ROM saute (`jr loc_1C04`) par-dessus la sous-cadence ET par-dessus le
+    // `dec` du compteur. La première étape n'est donc consommée que 4 ticks
+    // plus tard, et la transformation dure bien 8x4 ticks après ce tick-ci.
+    throttle: 0,
+    type: pickTransformType(-1),
+    targetLegsBase: player.legsBase ^ FORM_XOR,
+  };
+  // Le personnage est FIGÉ pendant toute la transformation, et ce n'est pas
+  // une simplification : la logique des types transitoires (#1BE1) n'appelle
+  // ni la lecture d'entrée, ni le saut, ni la gravité, ni le déplacement.
+  // Elle ne fait que cycler un sprite. On coupe donc aussi la vitesse, pour
+  // que le tick de reprise ne rejoue pas un pas vieux de 32 ticks.
+  player.velX = 0;
+  player.velY = 0;
+  player.velZ = 0;
+}
+
+/** Avance la transformation d'un tick. Rien d'autre ne se produit ce tick. */
+function advanceTransform(player: PlayerState): void {
+  const t = player.transform!;
+  t.throttle = (t.throttle + 1) % TRANSFORM_THROTTLE;
+  if (t.throttle !== 0) return;
+
+  t.stepsLeft--;
+  if (t.stepsLeft <= 0) {
+    // COMPLÉTION (#1C24) : `type_final = sauvegardé XOR #20`. Le corps suit
+    // tout seul, puisqu'il est dérivé (`+0x10`).
+    player.legsBase = t.targetLegsBase;
+    player.transform = null;
+    return;
+  }
+  t.type = pickTransformType(t.type);
 }
 
 /**
@@ -232,7 +421,27 @@ export function playerBox(player: PlayerState): Box3 {
  * ROM d'orientation pour une diagonale tenue, et faire alterner le regard
  * à 50 Hz scintillerait.
  */
-export function updatePlayer(player: PlayerState, intent: MoveIntent, obstacles: Obstacle[]): void {
+export function updatePlayer(
+  player: PlayerState,
+  intent: MoveIntent,
+  obstacles: Obstacle[],
+  dayNight: DayNightState,
+): void {
+  // ORDRE REPRIS DE LA ROM, et il compte. `fn_player_transform_trigger` est le
+  // TOUT PREMIER appel du corps de la logique joueur
+  // (asm/code/doors_and_player_logic.asm:463), et quand il part il saute le
+  // reste de la frame (`inc sp` x2 pour avaler le RET de l'appelant). D'où les
+  // deux sorties anticipées ci-dessous : pendant une transformation, il ne se
+  // passe littéralement rien d'autre.
+  if (player.transform) {
+    advanceTransform(player);
+    return;
+  }
+  if (dayNight.transformRequested && transformGateOpen(player)) {
+    startTransform(player, dayNight);
+    return;
+  }
+
   if (player.turnCooldown > 0) player.turnCooldown--;
 
   const [primary, secondary] = intent.targets;
@@ -271,6 +480,11 @@ export function updatePlayer(player: PlayerState, intent: MoveIntent, obstacles:
   if (intent.jump && !player.airborne) {
     player.velZ = JUMP_VELOCITY;
     player.airborne = true;
+    // `set 3,(ix+off_cooldown_or_collision_flags)` -- le drapeau « saut en
+    // cours » de fn_player_jump_trigger (#21F0). Il ne sert pas à la physique
+    // du portage (c'est `airborne` qui la porte) mais il gate la
+    // transformation, donc il doit être posé ici et nulle part ailleurs.
+    player.jumping = true;
   }
 
   const dz = player.velZ;
@@ -282,7 +496,13 @@ export function updatePlayer(player: PlayerState, intent: MoveIntent, obstacles:
     // "Atterri" seulement si le blocage vient d'un déplacement vers le BAS
     // (dz<=0) -- un blocage vers le haut (plafond/dessous d'un bloc) laisse
     // le joueur en l'air, il retombera dès le tick suivant.
-    if (dz <= 0) player.airborne = false;
+    if (dz <= 0) {
+      player.airborne = false;
+      // `res 3,(ix+off_cooldown_or_collision_flags)` (#22A1) : le drapeau de
+      // saut n'est effacé qu'en touchant le sol EN DESCENTE -- exactement la
+      // même condition que celle qui vient d'être testée.
+      player.jumping = false;
+    }
   } else {
     player.airborne = true;
   }
@@ -306,6 +526,20 @@ export function updatePlayer(player: PlayerState, intent: MoveIntent, obstacles:
   const yRes = resolveAxis(playerBox(player), player.velY, "y", obstacles);
   yRes.blocker?.pushTarget?.receivePush("y", player.velY);
   player.gridY += yRes.delta;
+
+  // EN FIN DE CORPS, pas au début : la ROM fait `(ix+0C) -= #10` tout à la
+  // fin de fn_player_logic_active_body (:230-233), donc APRÈS la gravité et
+  // seulement sur les frames où ce corps s'exécute réellement. Un tick de
+  // transformation ou de déclenchement sort avant et ne décrémente rien --
+  // c'est pour ça que ce n'est pas en tête de fonction.
+  if (player.transformCooldown > 0) player.transformCooldown--;
+}
+
+/** Arme le refus de transformation qui suit un franchissement de porte
+ * (`or #30`). Appelé par le portage au moment où il replace le joueur dans la
+ * salle voisine, là où la ROM le fait dans `fn_player_door_transition`. */
+export function armTransformCooldownAfterDoor(player: PlayerState): void {
+  player.transformCooldown = TRANSFORM_COOLDOWN_ON_DOOR;
 }
 
 /** Draw calls corps+jambes. Le corps est dessiné `BODY_Z_OFFSET` plus haut
@@ -320,13 +554,38 @@ export function updatePlayer(player: PlayerState, intent: MoveIntent, obstacles:
  *
  * À l'arrêt, on affiche la phase gelée : la ROM n'a pas de pose de repos
  * (voir walkAnimation.ts). */
-export function playerDrawCalls(player: PlayerState, view: ViewAngle): [SpriteDrawCall, SpriteDrawCall] {
+export function playerDrawCalls(player: PlayerState, view: ViewAngle): SpriteDrawCall[] {
   const [rx, ry] = rotateGrid(player.gridX, player.gridY, view);
+  // Clé de tri commune aux deux cas -- même formule que scene/room.ts.
+  const sortKey = -rx + ry - player.gridZ;
+
+  // PENDANT LA TRANSFORMATION : une figure UNIQUE, pas une paire. Le corps a
+  // été éteint par le déclencheur (type du slot compagnon forcé à 0x01), il
+  // n'y a donc rien à empiler et rien à départager.
+  if (player.transform) {
+    const frame = player.frames.transform[player.transform.type - TRANSFORM_TYPE_BASE]!;
+    const offset = getProjOffset(player.transform.type, 0) ?? [0, 0];
+    return [
+      {
+        texture: frame.texture,
+        worldPos: [rx, player.gridZ, ry],
+        size: [frame.width, frame.height],
+        projOffset: offset,
+        // Pas de miroir d'orientation ici : les types transitoires ne sont pas
+        // orientés (ils n'ont pas de jeu gauche/droite), seul le retournement
+        // propre à la vue s'applique par-dessus le bit capturé du sprite.
+        flipX: frame.hflipState !== viewNeedsFlip(view),
+        sortKey,
+      },
+    ];
+  }
+
+  const form = player.legsBase === LEGS_BASE_DAY ? player.frames.day : player.frames.night;
   const bit = orientationSpriteSetBit(player.orientation);
   const phase = player.anim.phase;
 
-  const bodyFrame = player.bodyFrames[bit === 0 ? 0 : 1][phase]!;
-  const legsFrame = player.legsFrames[bit === 0 ? 0 : 1][phase]!;
+  const bodyFrame = form.bodyFrames[bit === 0 ? 0 : 1][phase]!;
+  const legsFrame = form.legsFrames[bit === 0 ? 0 : 1][phase]!;
 
   // Miroir effectif = XOR de trois choses, comme scene/room.ts:96 : le bit6
   // capturé DANS le sprite (le jeu mute ce bit en place, ce n'est pas un
@@ -338,11 +597,16 @@ export function playerDrawCalls(player: PlayerState, view: ViewAngle): [SpriteDr
   const bodyFlip = bodyFrame.hflipState !== orientFlip !== viewFlip;
   const legsFlipX = legsFrame.hflipState !== orientFlip !== viewFlip;
 
-  // Calibration ROM réelle : jambes 0x10-0x1D -> #1D89 (-12,-6), corps
-  // 0x20-0x2F -> #1DA3 (-12,-8). Aucun de ces types ne fait dépendre son
-  // offset de l'orientation (vérifié 2026-09-04), d'où `flags` à 0.
-  const legsOffset = getProjOffset(legsTypeFor(bit, phase), 0) ?? [0, 0];
-  const bodyOffset = getProjOffset(bodyTypeFor(bit, phase), 0) ?? [0, 0];
+  // Calibration ROM réelle, et elle DIFFÈRE entre les deux formes -- c'est
+  // même la seule chose qui distingue fn_player_logic de sa jumelle nocturne :
+  // jambes jour -> #1D89 (-12,-6), jambes nuit -> #1DA8 (-12,-7), corps jour
+  // -> #1DA3 (-12,-8), corps nuit -> #1DAD (-12,-12). Le loup-garou est donc
+  // dessiné plus haut que le chevalier, ce qui est cohérent avec le
+  // `dec (ix+off_proj_offset_y)` que la complétion applique à la forme nuit
+  // (#1C3D). Rien à écrire ici : l'appel par TYPE va chercher la bonne valeur
+  // tout seul, précisément parce que la forme est dans le type.
+  const legsOffset = getProjOffset(legsTypeFor(player.legsBase, bit, phase), 0) ?? [0, 0];
+  const bodyOffset = getProjOffset(bodyTypeFor(player.legsBase, bit, phase), 0) ?? [0, 0];
 
   // Même formule de tri que scene/room.ts -- limite connue : un empilement
   // de blocs peut s'afficher devant le joueur dans certaines positions
@@ -362,7 +626,6 @@ export function playerDrawCalls(player: PlayerState, view: ViewAngle): [SpriteDr
   // départager la paire, trop peu pour qu'un décor (clés entières, voir
   // scene/room.ts) puisse s'intercaler entre les deux moitiés d'une même
   // figure.
-  const sortKey = -rx + ry - player.gridZ;
   const bodySortKey = sortKey - 0.5;
 
   return [

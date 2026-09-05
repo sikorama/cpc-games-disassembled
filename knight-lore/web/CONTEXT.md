@@ -109,6 +109,44 @@ hasard et tenues quelques frames.
 bit3 — d'où les paires 0x1E/0x1F (chevalier) et 0x9E/0x9F (Melkhior), qui
 sont **deux orientations d'un même personnage**, pas deux personnages.
 
+## Forme
+Apparence et identité du personnage selon le moment de la journée : le
+chevalier le jour, le loup-garou la nuit. Ce n'est pas un état séparé du
+personnage — c'est **un seul bit de son octet de type**, ce qui explique que
+les deux formes aient exactement la même structure d'animation, les mêmes
+phases et les mêmes règles. Tout ce qui distingue les deux tient dans le
+choix des dessins et dans la calibration de projection : le loup-garou est
+dessiné un cran plus haut. Voir [[Personnage en deux entités]] — la moitié
+« corps » se déduit de la moitié « jambes » dans une forme comme dans
+l'autre.
+
+À ne pas confondre avec la [[Transformation]], qui est le passage d'une forme
+à l'autre.
+
+## Cycle jour/nuit
+Horloge de la partie. Ce n'est pas un compteur caché : l'**icône soleil/lune
+qui traverse le HUD est elle-même l'horloge**, et c'est en atteignant le bord
+que le demi-cycle se termine. Chaque fin de demi-cycle demande une
+[[Transformation]] du joueur ; seul le passage nuit→jour fait avancer le
+compteur de jours, ce qui rend un « jour » égal à deux demi-cycles.
+
+Le compteur de jours est plafonné, et l'atteindre termine la partie — la
+durée totale d'une partie est donc une constante du jeu, pas une conséquence
+de la façon d'y jouer.
+
+## Transformation
+Passage d'une [[Forme]] à l'autre. C'est une **séquence, pas une bascule** :
+le personnage se fige entièrement — ni déplacement, ni saut, ni gravité — et
+son corps s'éteint, ne laissant qu'une figure unique qui tremble en cyclant
+des dessins transitoires, avant de réapparaître dans l'autre forme.
+
+Une transformation est **demandée** par le [[Cycle jour/nuit]], pas déclenchée
+par lui : le joueur peut refuser de la servir sur-le-champ (juste après un
+changement de salle, ou en plein saut), et la demande attend alors son
+tour. Elle peut même être perdue en entrant dans une salle. Demande et
+transformation sont donc deux choses distinctes, et les confondre fait
+paraître arbitraire un décalage qui ne l'est pas.
+
 ## Code d'orientation
 Grandeur du moteur d'origine valant 0-3 (`0=-X, 1=+X, 2=+Y, 3=-Y`),
 composée de deux bits qui ne jouent PAS le même rôle : l'un sélectionne un
