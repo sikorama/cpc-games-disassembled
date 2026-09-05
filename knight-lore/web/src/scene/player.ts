@@ -372,6 +372,25 @@ export function playerBox(player: PlayerState): Box3 {
 }
 
 /**
+ * Calibration de projection d'un type, avec le trou SIGNALÉ.
+ *
+ * `render/isoOffsets.ts` prévient en toutes lettres qu'un `null` avalé en
+ * silence décale le sprite sans rien dire -- c'est ce qui avait laissé 1053
+ * entités mal placées pendant des semaines. J'ai reproduit exactement ce piège
+ * en écrivant `?? [0, 0]` pour les images de (dé)matérialisation, dont la
+ * plage n'était pas encore calibrée : l'animation s'affichait décalée du
+ * personnage, sans le moindre message. D'où ce passage obligé.
+ */
+function projOffsetOrWarn(type: number, who: string): [number, number] {
+  const offset = getProjOffset(type, 0);
+  if (offset === null) {
+    console.warn(`${who} : aucune calibration de projection pour le type 0x${type.toString(16)}`);
+    return [0, 0];
+  }
+  return offset;
+}
+
+/**
  * Avance la (dé)matérialisation d'un tick.
  *
  * Les deux moitiés n'ont pas la même cadence, et c'est un fait ROM, pas un
@@ -679,7 +698,7 @@ export function playerDrawCalls(player: PlayerState, view: ViewAngle): SpriteDra
   // n'y a donc rien à empiler et rien à départager.
   if (player.materialize) {
     const frame = player.frames.materialize[player.materialize.type - MATERIALIZE_FIRST]!;
-    const offset = getProjOffset(player.materialize.type, 0) ?? [0, 0];
+    const offset = projOffsetOrWarn(player.materialize.type, "matérialisation");
     return [
       {
         texture: frame.texture,
@@ -694,7 +713,7 @@ export function playerDrawCalls(player: PlayerState, view: ViewAngle): SpriteDra
 
   if (player.transform) {
     const frame = player.frames.transform[player.transform.type - TRANSFORM_TYPE_BASE]!;
-    const offset = getProjOffset(player.transform.type, 0) ?? [0, 0];
+    const offset = projOffsetOrWarn(player.transform.type, "transformation");
     return [
       {
         texture: frame.texture,
@@ -735,8 +754,8 @@ export function playerDrawCalls(player: PlayerState, view: ViewAngle): SpriteDra
   // `dec (ix+off_proj_offset_y)` que la complétion applique à la forme nuit
   // (#1C3D). Rien à écrire ici : l'appel par TYPE va chercher la bonne valeur
   // tout seul, précisément parce que la forme est dans le type.
-  const legsOffset = getProjOffset(legsTypeFor(player.legsBase, bit, phase), 0) ?? [0, 0];
-  const bodyOffset = getProjOffset(bodyTypeFor(player.legsBase, bit, phase), 0) ?? [0, 0];
+  const legsOffset = projOffsetOrWarn(legsTypeFor(player.legsBase, bit, phase), "joueur (jambes)");
+  const bodyOffset = projOffsetOrWarn(bodyTypeFor(player.legsBase, bit, phase), "joueur (corps)");
 
   // Même formule de tri que scene/room.ts -- limite connue : un empilement
   // de blocs peut s'afficher devant le joueur dans certaines positions

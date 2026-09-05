@@ -136,6 +136,13 @@ put(range(0x50, 0x53), S_1D89);
 put([0x56], S_1D9E);
 // Étapes de transformation du joueur.
 put(range(0x5c, 0x5f), S_1D99);
+// Les 16 images de la (dé)matérialisation du joueur -- celles de la mort et du
+// lancement de partie. Les CINQ routines qui animent cette plage appellent le
+// même stub, vérifié octet par octet : #17A7, #17BC, #17D6, #17DC et #17FC
+// font toutes `call #1D84`. La plage est donc homogène, sans le trou aux
+// slots 6/7 qu'ont les familles de marche (ce ne sont pas des phases
+// d'animation encodées dans les bits bas, mais 16 images consécutives).
+put(range(0x70, 0x7f), S_1D84);
 // Objets ramassables. 0x67 (vie bonus) a sa propre routine et son propre stub.
 put(range(0x60, 0x66), S_1D84);
 put([0x67], S_1D7F);
