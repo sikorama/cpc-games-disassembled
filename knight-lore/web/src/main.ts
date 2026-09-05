@@ -22,6 +22,9 @@ import {
   armTransformCooldownAfterDoor,
   type PlayerState,
 } from "./scene/player";
+import { startNewGame, type NewGame } from "./game/newGame";
+import { objectsInRoom } from "./game/objectCatalog";
+import { loadRoomObjects, objectDrawCalls, type RoomObject } from "./scene/objects";
 import {
   createDayNightState,
   updateDayNight,
@@ -83,6 +86,13 @@ interface AppState {
    * joueur -- c'est un état de partie, il survit aux changements de salle
    * comme `var_day_night_flag` survit à fn_room_init. */
   dayNight: DayNightState;
+  /** Décisions prises au LANCEMENT de la partie : salle de départ et
+   * attribution des types du catalogue d'objets. Immuable pour la durée de la
+   * partie -- c'est un octet du jeu d'origine (game/newGame.ts). */
+  game: NewGame;
+  /** Objets à ramasser présents dans la salle courante, tirés du CATALOGUE et
+   * non du manifest (voir scene/objects.ts). */
+  roomObjects: RoomObject[];
   input: KeyboardState;
   /** Chargement de salle en cours (franchissement ou sélecteur) : le
    * joueur est figé, pas de nouvelle détection de franchissement tant que
@@ -118,15 +128,26 @@ async function main() {
   // `state` est un objet mutable (pas des `let` séparés) pour que
   // setupControls() et la boucle frame() gardent une référence stable même
   // quand on change de salle ou d'angle.
-  const room = await loadRoom(gl, DEFAULT_ROOM_ID);
+  // Une partie de Knight Lore, c'est un octet : salle de départ et catalogue
+  // d'objets en découlent tous les deux (game/newGame.ts).
+  const game = startNewGame();
+  // Le sélecteur suit la salle de départ tirée : sans ça il afficherait
+  // encore DEFAULT_ROOM_ID alors qu'on joue ailleurs.
+  select.value = String(game.startRoom);
+  const room = await loadRoom(gl, game.startRoom);
   const built = room.build(0, false);
   const playerSpriteIndex = await loadSpriteIndex();
   const playerFrames = await loadPlayerFrames(gl, playerSpriteIndex);
-  const guards = await loadGuards(DEFAULT_ROOM_ID);
+  const guards = await loadGuards(game.startRoom);
+  const startObjects = await loadRoomObjects(
+    gl,
+    playerSpriteIndex,
+    objectsInRoom(game.catalog, game.startRoom),
+  );
   const state: AppState = {
     controlMode: "directional",
     room,
-    roomId: DEFAULT_ROOM_ID,
+    roomId: game.startRoom,
     view: 0,
     hideWalls: false,
     built,
@@ -136,6 +157,8 @@ async function main() {
     obstacles: buildObstacles(room.getEntities()),
     pushables: createPushables(room.getMovableEntities()),
     dayNight: createDayNightState(),
+    game,
+    roomObjects: startObjects,
     input: createKeyboardState(window),
     transitioning: false,
   };
@@ -167,6 +190,11 @@ async function main() {
     state.obstacles = buildObstacles(state.room.getEntities());
     state.pushables = createPushables(state.room.getMovableEntities());
     state.guards = await loadGuards(roomId);
+    state.roomObjects = await loadRoomObjects(
+      gl,
+      await loadSpriteIndex(),
+      objectsInRoom(state.game.catalog, roomId),
+    );
     state.player.gridX = PLAYER_SPAWN.gridX;
     state.player.gridY = PLAYER_SPAWN.gridY;
     state.player.gridZ = PLAYER_SPAWN.gridZ;
@@ -204,6 +232,11 @@ async function main() {
       // état persistant à sauvegarder.
       state.pushables = createPushables(state.room.getMovableEntities());
       state.guards = await loadGuards(targetRoomId);
+      state.roomObjects = await loadRoomObjects(
+        gl,
+        await loadSpriteIndex(),
+        objectsInRoom(state.game.catalog, targetRoomId),
+      );
       repositionForEntry(state.player, crossing);
       // Franchir une porte refuse la transformation pendant 3 ticks (`or #30`
       // sur le cooldown, asm/code/doors_and_player_logic.asm:761-763). Armé
@@ -300,6 +333,7 @@ async function main() {
       ...playerDrawCalls(state.player, state.view),
       ...state.guards.flatMap((guard) => guardDrawCalls(guard, state.view)),
       ...pushableDrawCalls(state.pushables, state.view),
+      ...objectDrawCalls(state.roomObjects, state.view),
     ];
     renderer.draw(state.camera.getView(), state.camera.getProjection(aspect), drawCalls);
     drawTopView(
@@ -337,6 +371,11 @@ function updateHud(state: AppState): void {
   document.getElementById("hud-days")!.textContent = dn.daysExhausted
     ? `${dayCounterDecimal(dn)} (épuisé)`
     : String(dayCounterDecimal(dn));
+  document.getElementById("hud-seed")!.textContent =
+    `${state.game.seed.toString(16)} (départ 0x${state.game.startRoom.toString(16)})`;
+  document.getElementById("hud-objects")!.textContent = state.roomObjects.length
+    ? state.roomObjects.map((o) => `0x${o.placed.type.toString(16)}`).join(" ")
+    : "aucun";
 }
 
 function setupControls(canvas: HTMLCanvasElement, state: AppState, rebuild: () => void) {

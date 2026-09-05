@@ -1,0 +1,265 @@
+{
+  "source": "dump_ref.bin",
+  "base": "417E",
+  "entry_size": 9,
+  "count": 32,
+  "note": "Emplacements FIXES des objets a ramasser. Le TYPE (0x60-0x67) n'est pas ici : il est tire au lancement de chaque partie par fn_catalog_randomize_types (#1D27).",
+  "entries": [
+    {
+      "index": 0,
+      "addr": "417E",
+      "grid_x": 136,
+      "grid_y": 128,
+      "grid_z": 164,
+      "room": 109
+    },
+    {
+      "index": 1,
+      "addr": "4187",
+      "grid_x": 128,
+      "grid_y": 128,
+      "grid_z": 140,
+      "room": 39
+    },
+    {
+      "index": 2,
+      "addr": "4190",
+      "grid_x": 136,
+      "grid_y": 120,
+      "grid_z": 176,
+      "room": 208
+    },
+    {
+      "index": 3,
+      "addr": "4199",
+      "grid_x": 120,
+      "grid_y": 136,
+      "grid_z": 128,
+      "room": 10
+    },
+    {
+      "index": 4,
+      "addr": "41A2",
+      "grid_x": 120,
+      "grid_y": 136,
+      "grid_z": 128,
+      "room": 186
+    },
+    {
+      "index": 5,
+      "addr": "41AB",
+      "grid_x": 136,
+      "grid_y": 120,
+      "grid_z": 176,
+      "room": 66
+    },
+    {
+      "index": 6,
+      "addr": "41B4",
+      "grid_x": 136,
+      "grid_y": 184,
+      "grid_z": 188,
+      "room": 141
+    },
+    {
+      "index": 7,
+      "addr": "41BD",
+      "grid_x": 168,
+      "grid_y": 168,
+      "grid_z": 128,
+      "room": 255
+    },
+    {
+      "index": 8,
+      "addr": "41C6",
+      "grid_x": 128,
+      "grid_y": 128,
+      "grid_z": 128,
+      "room": 135
+    },
+    {
+      "index": 9,
+      "addr": "41CF",
+      "grid_x": 120,
+      "grid_y": 184,
+      "grid_z": 128,
+      "room": 243
+    },
+    {
+      "index": 10,
+      "addr": "41D8",
+      "grid_x": 168,
+      "grid_y": 104,
+      "grid_z": 176,
+      "room": 168
+    },
+    {
+      "index": 11,
+      "addr": "41E1",
+      "grid_x": 184,
+      "grid_y": 72,
+      "grid_z": 176,
+      "room": 210
+    },
+    {
+      "index": 12,
+      "addr": "41EA",
+      "grid_x": 72,
+      "grid_y": 72,
+      "grid_z": 128,
+      "room": 0
+    },
+    {
+      "index": 13,
+      "addr": "41F3",
+      "grid_x": 136,
+      "grid_y": 184,
+      "grid_z": 128,
+      "room": 34
+    },
+    {
+      "index": 14,
+      "addr": "41FC",
+      "grid_x": 184,
+      "grid_y": 184,
+      "grid_z": 176,
+      "room": 122
+    },
+    {
+      "index": 15,
+      "addr": "4205",
+      "grid_x": 184,
+      "grid_y": 184,
+      "grid_z": 128,
+      "room": 249
+    },
+    {
+      "index": 16,
+      "addr": "420E",
+      "grid_x": 136,
+      "grid_y": 152,
+      "grid_z": 176,
+      "room": 214
+    },
+    {
+      "index": 17,
+      "addr": "4217",
+      "grid_x": 120,
+      "grid_y": 136,
+      "grid_z": 176,
+      "room": 232
+    },
+    {
+      "index": 18,
+      "addr": "4220",
+      "grid_x": 120,
+      "grid_y": 120,
+      "grid_z": 176,
+      "room": 246
+    },
+    {
+      "index": 19,
+      "addr": "4229",
+      "grid_x": 136,
+      "grid_y": 120,
+      "grid_z": 140,
+      "room": 15
+    },
+    {
+      "index": 20,
+      "addr": "4232",
+      "grid_x": 184,
+      "grid_y": 184,
+      "grid_z": 128,
+      "room": 111
+    },
+    {
+      "index": 21,
+      "addr": "423B",
+      "grid_x": 72,
+      "grid_y": 184,
+      "grid_z": 164,
+      "room": 253
+    },
+    {
+      "index": 22,
+      "addr": "4244",
+      "grid_x": 120,
+      "grid_y": 120,
+      "grid_z": 176,
+      "room": 8
+    },
+    {
+      "index": 23,
+      "addr": "424D",
+      "grid_x": 136,
+      "grid_y": 136,
+      "grid_z": 164,
+      "room": 187
+    },
+    {
+      "index": 24,
+      "addr": "4256",
+      "grid_x": 120,
+      "grid_y": 120,
+      "grid_z": 176,
+      "room": 223
+    },
+    {
+      "index": 25,
+      "addr": "425F",
+      "grid_x": 128,
+      "grid_y": 128,
+      "grid_z": 128,
+      "room": 94
+    },
+    {
+      "index": 26,
+      "addr": "4268",
+      "grid_x": 120,
+      "grid_y": 136,
+      "grid_z": 176,
+      "room": 180
+    },
+    {
+      "index": 27,
+      "addr": "4271",
+      "grid_x": 120,
+      "grid_y": 120,
+      "grid_z": 176,
+      "room": 4
+    },
+    {
+      "index": 28,
+      "addr": "427A",
+      "grid_x": 72,
+      "grid_y": 184,
+      "grid_z": 128,
+      "room": 116
+    },
+    {
+      "index": 29,
+      "addr": "4283",
+      "grid_x": 128,
+      "grid_y": 128,
+      "grid_z": 128,
+      "room": 64
+    },
+    {
+      "index": 30,
+      "addr": "428C",
+      "grid_x": 104,
+      "grid_y": 120,
+      "grid_z": 176,
+      "room": 56
+    },
+    {
+      "index": 31,
+      "addr": "4295",
+      "grid_x": 72,
+      "grid_y": 184,
+      "grid_z": 152,
+      "room": 240
+    }
+  ]
+}

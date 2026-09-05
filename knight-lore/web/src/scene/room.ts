@@ -7,6 +7,7 @@ import { loadRoomEntities } from "../data/roomManifest";
 import { loadSpriteIndex, type SpriteIndex } from "../data/spriteManifest";
 import type { RoomEntity } from "../data/types";
 import { pushPolicyFor } from "../physics/solidTypes";
+import { OBJECT_TYPE_BASE, OBJECT_TYPE_COUNT } from "../game/objectCatalog";
 
 /** Entité résolue (texture chargée), indépendante de l'angle de vue --
  * séparée des draw calls pour que changer d'angle soit un simple recalcul
@@ -21,6 +22,15 @@ export interface ResolvedEntity {
   /** Corps mobile (table/coffre/bloc poussable) : sorti du rendu STATIQUE et
    * redessiné chaque frame à sa position courante par scene/pushables.ts. */
   isMovable: boolean;
+  /** Objet à ramasser (0x60-0x67). SORTI DU RENDU, et pas pour une raison de
+   * mise en scène : ces instances-là ne sont PAS des données de salle. Le
+   * manifest a été capturé sur une partie en cours, et le jeu réattribue les
+   * types d'objets À CHAQUE LANCEMENT (`fn_catalog_randomize_types` #1D27).
+   * Les afficher tels quels figerait le portage sur la partie qui a servi à
+   * l'extraction -- vérifié : ses 32 objets correspondent exactement à la
+   * rotation 1. C'est game/objectCatalog.ts qui décide, et scene/objects.ts
+   * qui dessine. */
+  isCatalogObject: boolean;
 }
 
 /**
@@ -117,8 +127,11 @@ export class LoadedRoom {
     let maxY = -Infinity;
 
     for (const resolved of this.entities) {
-      const { entity, width, height, isWall, isMovable } = resolved;
+      const { entity, width, height, isWall, isMovable, isCatalogObject } = resolved;
       if (hideWalls && isWall) continue;
+      // Les objets ne participent même pas au cadrage : leur emplacement du
+      // manifest appartient à une autre partie que celle qui se joue.
+      if (isCatalogObject) continue;
 
       const call = entityDrawCall(resolved, entity.gridX, entity.gridY, entity.gridZ, view);
 
@@ -173,6 +186,12 @@ export function getTexture(gl: WebGL2RenderingContext, url: string): Promise<Web
  * murs sont des 0x80 et aucun 0x0A-0x0F -- le rendu ne reconnaissait aucun
  * mur, alors que la physique en voyait partout. Deux définitions du même
  * concept, c'est une de trop : si l'une bouge, l'autre doit suivre. */
+/** Objets à ramasser : la plage entière 0x60-0x67, telle que la produit
+ * `A & 7 | 0x60` dans le randomiseur -- donc close par construction. */
+function isCatalogObjectType(type: number): boolean {
+  return type >= OBJECT_TYPE_BASE && type < OBJECT_TYPE_BASE + OBJECT_TYPE_COUNT;
+}
+
 function isWallType(type: number): boolean {
   return type === 0x80 || (type >= 0x0a && type <= 0x0f);
 }
@@ -213,6 +232,7 @@ export async function loadRoom(gl: WebGL2RenderingContext, roomId: number): Prom
       hflipState: sprite.hflipState,
       isWall: isWallType(entity.type),
       isMovable: pushPolicyFor(entity.type, entity.flags) !== null,
+      isCatalogObject: isCatalogObjectType(entity.type),
     });
   }
 
