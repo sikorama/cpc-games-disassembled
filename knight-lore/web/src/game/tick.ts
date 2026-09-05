@@ -16,9 +16,24 @@
 //
 // La cadence ci-dessous est donc un ÉCART ASSUMÉ (voir web/DEVIATIONS.md),
 // et le seul de tout le portage dont le fait de référence soit « le jeu n'en
-// a pas » plutôt qu'une adresse ROM. Une seule constante à changer si le jeu
-// paraît trop rapide : 50 -> 25.
-export const TICK_HZ = 50;
+// a pas » plutôt qu'une adresse ROM.
+//
+// RÉGLÉE À 25 Hz (2026-09-05, jugé « un peu rapide » à 50). Les vitesses
+// tirées de la ROM sont exprimées en unités PAR TICK -- pas du joueur de ±3
+// (tbl_player_forward_vector_dispatch #22E4), pas du garde de ±2
+// (fn_resolve_patrol_vector #12A5), une phase de marche par tick de
+// déplacement -- donc baisser la cadence les ralentit toutes ensemble, dans le
+// même rapport, sans toucher à une seule d'entre elles.
+//
+// Ce qui NE doit pas suivre : la gravité et la vitesse de saut. Ce sont les
+// deux seules grandeurs du portage qui ne viennent pas de la ROM (le saut n'est
+// pas désassemblé, voir web/DEVIATIONS.md) et elles sont réglées en TEMPS RÉEL,
+// pas en ticks. Elles sont donc dérivées de TICK_HZ dans scene/player.ts plutôt
+// que réécrites à la main : la hauteur de saut en unités de grille -- qui, elle,
+// est du gameplay, il faut pouvoir monter sur un bloc à +0x0C -- reste alors
+// identique quelle que soit la cadence. C'est la seule dépendance à cette
+// constante en dehors de la boucle ; changer 25 ici suffit.
+export const TICK_HZ = 25;
 export const TICK_SECONDS = 1 / TICK_HZ;
 
 // Plafond de rattrapage : après un onglet en arrière-plan ou un à-coup, on

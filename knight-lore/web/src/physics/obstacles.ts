@@ -13,15 +13,32 @@
 // bloquent à toute hauteur -- voir buildSideWalls().
 
 import type { RoomEntity } from "../data/types";
-import { isSolidType } from "./solidTypes";
+import { isSolidType, pushPolicyFor } from "./solidTypes";
 import type { Box3 } from "./aabb";
 import { ROOM_EDGE_MIN, ROOM_EDGE_MAX, DOOR_TYPES, DOOR_GAP_HALF_WIDTH } from "../scene/roomTransition";
+
+/** Ce qu'un obstacle expose quand le heurter doit le DÉPLACER.
+ *
+ * FAIT ROM : `fn_entity_collide_axis_x`/`_y` (#244C/#249B) recopient le vecteur
+ * en attente du mobile dans celui de l'entité heurtée quand elle porte le bit 2
+ * de `flags` -- voir physics/solidTypes.ts. Décrit ici en interface minimale
+ * (et non par un import de scene/pushables.ts) pour que la physique ne dépende
+ * pas de la scène : c'est la scène qui vient s'y brancher. */
+export interface PushTarget {
+  /** Reçoit le pas ENTIER du mobile sur cet axe (pas le reliquat rogné --
+   * la ROM recopie `(ix+09)`, l'octet de structure, pas le registre de
+   * travail). */
+  receivePush(axis: "x" | "y", delta: number): void;
+}
 
 export interface Obstacle {
   box: Box3;
   /** Catégorie d'origine -- uniquement pour le débogage visuel (voir
    * debug/topView.ts), sans effet sur la résolution physique elle-même. */
   kind: "wall" | "block" | "floor";
+  /** Présent seulement sur les obstacles qui sont des corps mobiles poussables
+   * (scene/pushables.ts). `undefined` = décor inerte. */
+  pushTarget?: PushTarget;
 }
 
 // Repli si bbox_w/h absentes (murs) : demi-étendue X/Y fixe centrée sur
@@ -59,8 +76,8 @@ const WALL_MAX_Z = 0xff;
 // blocs empilables, statues, etc. Le pas de hauteur 12 correspond à
 // l'empilement observé des blocs (ex. gridZ 0x80 -> 0x8C -> 0x98) --
 // confirmé identique à la vraie bbox du type 0x07 (8,8,12).
-const BLOCK_HALF_EXTENT = 8;
-const BLOCK_HEIGHT = 12;
+export const BLOCK_HALF_EXTENT = 8;
+export const BLOCK_HEIGHT = 12;
 
 // Plan de sol synthétique : aucune entité du manifest ne représente le
 // sol -- sans lui, rien n'existe pour que la gravité fasse atterrir le
@@ -79,7 +96,7 @@ const FLOOR_THICKNESS = 16;
  * demi-étendues bbox_w/h/d (X/Y/Z) quand les TROIS sont présentes
  * (toujours ensemble ou aucune, voir data/types.ts), sinon les valeurs de
  * repli approximatives passées en paramètre. */
-function entityBox(
+export function entityBox(
   entity: RoomEntity,
   fallbackHalfX: number,
   fallbackHalfY: number,
@@ -279,6 +296,11 @@ export function buildObstacles(entities: RoomEntity[]): Obstacle[] {
   const obstacles: Obstacle[] = buildSideWalls(entities, doors);
 
   for (const entity of entities) {
+    // Les corps mobiles (table/coffre/bloc poussable) sont exclus du décor
+    // statique : ils fournissent leur propre obstacle à leur position
+    // COURANTE (scene/pushables.ts, mergeObstacles ci-dessous). Les inclure
+    // ici laisserait un obstacle fantôme à leur position de départ.
+    if (pushPolicyFor(entity.type, entity.flags) !== null) continue;
     if (isSolidType(entity.type) && !entity.isWall) {
       obstacles.push({ kind: "block", box: entityBox(entity, BLOCK_HALF_EXTENT, BLOCK_HALF_EXTENT, BLOCK_HEIGHT) });
     }

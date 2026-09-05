@@ -164,9 +164,17 @@ export function updateGuard(guard: GuardState, obstacles: Obstacle[]): void {
   const axis = DIRECTION_AXIS[guard.direction];
   const step = DIRECTION_STEP[guard.direction];
   const delta = step * GUARD_STEP;
-  const obstacleBoxes = obstacles.map((o) => o.box);
+  const res = resolveAxis(guardBox(guard), delta, axis, obstacles);
 
-  const res = resolveAxis(guardBox(guard), delta, axis, obstacleBoxes);
+  // LE GARDE POUSSE, exactement comme le joueur, et ce n'est pas une
+  // généralisation optimiste : fn_guard_patrol_logic (#1280,
+  // asm/code/entity_logic_mechanical.asm) applique son vecteur par `RST 10`,
+  // donc par fn_entity_movement_vector_resolve -- le même corps générique, avec
+  // le même scan par axe qui propage le vecteur à l'entité heurtée. Et c'est
+  // déjà confirmé EN JEU : « impact gardien/table synchronisé, table poussée
+  // d'un cran à chaque demi-tour du gardien ». Le pousseur n'est donc pas une
+  // propriété du joueur, c'est une propriété du mouvement.
+  res.blocker?.pushTarget?.receivePush(axis, delta);
   let blocked = res.blocked;
   const coordAfter = (axis === "x" ? guard.gridX : guard.gridY) + res.delta;
 

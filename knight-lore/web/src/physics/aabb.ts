@@ -33,13 +33,23 @@ function overlapsOtherAxes(a: Box3, b: Box3, axis: Axis): boolean {
   return xOverlap && yOverlap;
 }
 
-export interface AxisResolution {
+export interface AxisResolution<T> {
   /** Déplacement réellement permis sur cet axe (peut être réduit par un
    * obstacle, jamais agrandi). */
   delta: number;
   /** Un obstacle a réduit le déplacement -- pour Z, c'est le signal
    * "atterri"/"a heurté un plafond" (voir scene/player.ts). */
   blocked: boolean;
+  /** L'obstacle qui a le plus réduit le déplacement, ou `null` si aucun.
+   *
+   * FAIT ROM : le scan de collision par axe du jeu d'origine ne se contente
+   * pas de bloquer, il AGIT sur l'entité heurtée -- `fn_entity_collide_axis_x`
+   * (#244C, asm/code/doors_and_player_logic.asm:895-936) teste
+   * `bit 2,(iy+off_flags)` et, si le bit est posé, recopie le vecteur en
+   * attente du mobile dans celui de l'entité heurtée. Rendre l'obstacle
+   * bloquant est donc une nécessité, pas un confort : sans lui il n'y a
+   * personne à pousser. */
+  blocker: T | null;
 }
 
 /**
@@ -53,14 +63,21 @@ export interface AxisResolution {
  * (pas de "poussée" hors obstacle) -- un choix MVP simple, honnête sur ses
  * limites plutôt que de deviner une résolution de pénétration.
  */
-export function resolveAxis(box: Box3, delta: number, axis: Axis, obstacles: Box3[]): AxisResolution {
-  if (delta === 0) return { delta: 0, blocked: false };
+export function resolveAxis<T extends { box: Box3 }>(
+  box: Box3,
+  delta: number,
+  axis: Axis,
+  obstacles: readonly T[],
+): AxisResolution<T> {
+  if (delta === 0) return { delta: 0, blocked: false, blocker: null };
 
   let allowed = delta;
   let blocked = false;
+  let blocker: T | null = null;
   const [boxMin, boxMax] = axisRange(box, axis);
 
-  for (const obstacle of obstacles) {
+  for (const candidate of obstacles) {
+    const obstacle = candidate.box;
     if (!overlapsOtherAxes(box, obstacle, axis)) continue;
     const [obsMin, obsMax] = axisRange(obstacle, axis);
 
@@ -70,6 +87,7 @@ export function resolveAxis(box: Box3, delta: number, axis: Axis, obstacles: Box
       if (gap < allowed) {
         allowed = gap;
         blocked = true;
+        blocker = candidate;
       }
     } else {
       if (obsMax > boxMin) continue;
@@ -77,9 +95,10 @@ export function resolveAxis(box: Box3, delta: number, axis: Axis, obstacles: Box
       if (gap > allowed) {
         allowed = gap;
         blocked = true;
+        blocker = candidate;
       }
     }
   }
 
-  return { delta: allowed, blocked };
+  return { delta: allowed, blocked, blocker };
 }

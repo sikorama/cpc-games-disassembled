@@ -15,6 +15,7 @@ import type { Box3 } from "../physics/aabb";
 import { resolveAxis } from "../physics/aabb";
 import type { Obstacle } from "../physics/obstacles";
 import type { MoveIntent } from "../input/controlMode";
+import { TICK_HZ } from "../game/tick";
 import type { SpriteDrawCall } from "../gl/spriteBatch";
 import type { SpriteIndex } from "../data/spriteManifest";
 import { rotateGrid, viewNeedsFlip, type ViewAngle } from "../render/isoMath";
@@ -84,11 +85,24 @@ function bodyTypeFor(bit: number, phase: number): number {
 export const PLAYER_STEP = 3;
 
 // Gravité et saut : PAS des faits ROM (le désassemblage du saut n'a pas été
-// mené). Valeurs de réglage, converties des anciennes constantes en
-// unités/seconde à 50 Hz pour ne pas changer le ressenti au passage au pas
-// fixe : -300 u/s² -> -300/50² et 120 u/s -> 120/50. Exprimées par TICK.
-export const GRAVITY = -0.12;
-export const JUMP_VELOCITY = 2.4;
+// mené, voir web/DEVIATIONS.md). Ce sont des valeurs de réglage, et les seules
+// grandeurs du portage réglées en TEMPS RÉEL et non par tick -- d'où la
+// dérivation depuis TICK_HZ plutôt que deux nombres écrits en dur.
+//
+// Ce que ça préserve, et pourquoi ça compte : la HAUTEUR de saut en unités de
+// grille vaut `JUMP_VELOCITY² / (2·|GRAVITY|)`, soit `(V/f)² / (2·A/f²)` =
+// `V²/(2A)` -- indépendante de la cadence. Or cette hauteur est du gameplay :
+// il faut pouvoir monter sur un bloc à +0x0C. Deux constantes par tick écrites
+// à la main auraient doublé la hauteur de saut en passant de 50 à 25 Hz, un
+// changement que personne n'aurait demandé.
+//
+// Les vitesses HORIZONTALES, elles, sont bien par tick (PLAYER_STEP ci-dessus,
+// fait ROM) : elles ralentissent avec la cadence, et c'est exactement l'effet
+// recherché.
+const GRAVITY_PER_SECOND2 = -300;
+const JUMP_VELOCITY_PER_SECOND = 120;
+export const GRAVITY = GRAVITY_PER_SECOND2 / (TICK_HZ * TICK_HZ);
+export const JUMP_VELOCITY = JUMP_VELOCITY_PER_SECOND / TICK_HZ;
 
 // Boîte de collision du joueur -- approximation, cohérente en échelle
 // avec les footprints de physics/obstacles.ts.
@@ -259,10 +273,9 @@ export function updatePlayer(player: PlayerState, intent: MoveIntent, obstacles:
     player.airborne = true;
   }
 
-  const obstacleBoxes = obstacles.map((o) => o.box);
   const dz = player.velZ;
 
-  const zRes = resolveAxis(playerBox(player), dz, "z", obstacleBoxes);
+  const zRes = resolveAxis(playerBox(player), dz, "z", obstacles);
   player.gridZ += zRes.delta;
   if (zRes.blocked) {
     player.velZ = 0;
@@ -274,10 +287,24 @@ export function updatePlayer(player: PlayerState, intent: MoveIntent, obstacles:
     player.airborne = true;
   }
 
-  const xRes = resolveAxis(playerBox(player), player.velX, "x", obstacleBoxes);
+  // POUSSÉE. Le joueur ne connaît aucun type poussable : il rend simplement
+  // son pas à l'obstacle qui l'a bloqué, et c'est l'obstacle qui sait s'il est
+  // un corps mobile (physics/obstacles.ts `PushTarget`, scene/pushables.ts).
+  // C'est la structure de la ROM elle-même : le scan par axe
+  // (fn_entity_collide_axis_x/_y, #244C/#249B) fait `bit 2,(iy+off_flags)` sur
+  // l'entité HEURTÉE, jamais un test sur le mobile.
+  //
+  // On transmet `player.velX`, le pas voulu, et non `xRes.delta`, le reliquat
+  // autorisé : la ROM recopie `(ix+09)`, l'octet de structure, encore intact à
+  // ce moment (il n'est réécrit rogné qu'en fin de résolution, #23F7
+  // loc_243E). Un joueur bloqué net contre une table lui transmet donc quand
+  // même un pas plein -- c'est ce qui fait qu'elle avance alors que lui non.
+  const xRes = resolveAxis(playerBox(player), player.velX, "x", obstacles);
+  xRes.blocker?.pushTarget?.receivePush("x", player.velX);
   player.gridX += xRes.delta;
 
-  const yRes = resolveAxis(playerBox(player), player.velY, "y", obstacleBoxes);
+  const yRes = resolveAxis(playerBox(player), player.velY, "y", obstacles);
+  yRes.blocker?.pushTarget?.receivePush("y", player.velY);
   player.gridY += yRes.delta;
 }
 
