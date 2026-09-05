@@ -1278,6 +1278,91 @@ cohérent du jeu — un thème, un niveau, une famille d'objets — plutôt que 
 cas dispersés. Ça ne ressemble pas à un bug de calcul, ça ressemble à une
 zone oubliée, et c'est presque toujours une énumération incomplète.
 
+## 26. Une capacité peut être un BIT DE DONNÉES, pas une table de types
+
+**Symptôme.** On cherche « quels types d'entité sont poussables /
+destructibles / ramassables » et on part chasser une table de types dans le
+code. On n'en trouve pas, alors on en reconstruit une à la main depuis les
+comportements observés — et elle est fausse dès le premier contre-exemple.
+
+**Ce qui se passait réellement (Knight Lore, poussée).** Il n'y a aucune table.
+Le scan de collision par axe teste un **bit dans la structure de l'entité
+heurtée** :
+
+```
+bit  2,(iy+off_flags)      ; l'entité HEURTÉE est-elle poussable ?
+jr   z,pas_de_poussee
+ld   a,(ix+#09)            ; vecteur en attente du MOBILE
+ld   (iy+#09),a            ; ... recopié dans celui de la heurtée
+```
+
+Le bit ne vient d'aucun `set` dans le code : il est **dans les données de
+niveau**, posé par instance. La capacité est donc une donnée, pas une règle.
+
+**Comment le repérer.** Deux signes, dans cet ordre :
+
+1. `grep` sur `set N,(ix+off_flags)` pour le bit suspect ne rend **rien**.
+   Un bit lu partout et jamais écrit vient des données, point.
+2. Le test porte sur `iy`, pas sur `ix` — la routine interroge *l'autre*
+   entité. Un test sur l'autre entité est presque toujours une capacité ; un
+   test sur soi est presque toujours un état.
+
+**Pourquoi ça vaut le détour.** Un bit de données se **vérifie sur les
+données**, ce qu'une table de types déduite ne permet pas. Tabuler le bit par
+type sur toutes les salles a immédiatement :
+
+- **confirmé** la liste réelle (ici : trois types de mobilier et les objets
+  ramassables) ;
+- **infirmé** quatre types qu'on avait rangés là par ressemblance de sprite —
+  ils ne portent pas le bit, donc leur mouvement vient d'ailleurs ;
+- donné la garantie que la liste est **exhaustive**, puisqu'elle sort du
+  contenu du jeu et non de ce qu'on avait croisé.
+
+Le croisement code + données est ce qui transforme une lecture en certitude :
+le code dit *ce que le bit déclenche*, les données disent *sur quoi il est
+posé*. Ni l'un ni l'autre seul ne suffit. Voir aussi §24 (un outil exporte des
+faits, pas une politique) et §25 (énumérer depuis le désassemblage).
+
+## 27. Deux routines « identiques à un CALL près » : lire l'ORDRE, pas la présence
+
+**Symptôme.** Trois routines de logique se ressemblent tellement qu'on les
+résume par « même mécanisme », et on note la différence comme un détail. Ici,
+trois objets de mobilier partagent la même queue et ne diffèrent que par la
+place d'un `CALL` qui remet le vecteur de déplacement à zéro :
+
+```
+type A :  RST 10  /  CALL efface        -> avance puis oublie : s'arrête net
+type B :  RST 10                        -> le vecteur persiste : continue seul
+type C :  CALL efface  /  RST 10        -> efface AVANT d'appliquer : immobile
+```
+
+A et C ont le même jeu d'instructions, à l'ordre près, et des comportements
+opposés. Une note antérieure avait décrit le `CALL` de C comme « exactement le
+même appel que A » — vrai pour l'appel, faux pour le programme.
+
+**La règle.** Quand deux routines diffèrent par la *position* d'un appel autour
+d'un point d'application, la position **est** la sémantique. Écrire la
+différence comme « A appelle X, B non » est déjà une perte d'information :
+écrire l'ordre relatif au point d'application.
+
+**Le corollaire d'ordonnancement.** Pour trancher le cas C, la place du `CALL`
+ne suffit pas — il faut savoir **qui joue son tour en premier** dans la boucle
+principale. Une capacité écrite dans une autre entité n'a d'effet que si cette
+entité joue son tour *après* l'écriture. La boucle de Knight Lore parcourt ses
+slots en ordre croissant et le joueur est le slot 0 : tout ce que le joueur
+écrit dans une autre entité est vu par elle **le même tour**. C'est ce qui rend
+C immobile plutôt que simplement lent.
+
+Vérifier l'ordre de dispatch avant de conclure sur toute interaction
+inter-entités — c'est une donnée de la boucle, pas de la routine qu'on lit.
+
+**Et la limite honnête.** Cette conclusion reste statique. Elle est cohérente
+avec les données (les instances du type C sont capturées immobiles à des
+hauteurs où rien ne les soutient, donc elles ne bougent pas non plus sous la
+gravité) mais **une trace live la trancherait en une minute**. Encoder la
+conclusion là où une seule valeur change si elle tombe, et écrire dans la note
+le geste exact qui la vérifierait.
+
 ## Limites connues de cette méthode
 
 - Le sondage par breakpoint + poll a un coût réel (chaque hit/step est
