@@ -1150,9 +1150,9 @@
       "addr": "0F67",
       "name": "fn_sinking_cube_logic",
       "type": "code",
-      "status": "confirmed",
+      "status": "confirmed (descente RESOLUE 2026-09-05)",
       "short": "Formalisée en symbole/asm",
-      "long": "Formalisée en symbole/asm. Flag bit3 de (ix+0D) déclenché une fois puis consommé (RES), applique le vecteur (RST 10), arme fn_sound_arm_position_pitch_ch1 (0x0A22, hauteur dérivée de grid_z) sur collision. Mécanisme exact de la descente (grid_z) toujours pas trouvé dans cette routine — piste ouverte."
+      "long": "Type 0x5B, cube qui s'enfonce. Flag bit3 de state_flags_2 declenche une fois puis consomme (RES), applique le vecteur (RST 10), arme fn_sound_arm_position_pitch_ch1 sur collision. DESCENTE RESOLUE : elle n'est PAS dans cette routine ni dans le systeme de collision, c'est un EFFET DE BORD du prelude de RST 10. La routine ecrit `ld (ix+0B),#00` juste avant le `rst #10`, dont le prelude fait `dec (ix+0B)` -- l'octet vaut donc #FF = -1 quand la primitive le relit comme composante Z, et le cube descend d'exactement UNE unite de grille par declenchement. Preuve differentielle : fn_moving_block_logic ecrit 1 au meme endroit relatif, soit 0 apres decrement, donc aucun mouvement vertical. Le DECLENCHEUR (bit3) est pose par fn_entity_collide_axis_z (#24EA) sur l'entite SUR LAQUELLE on repose -- c'est la plaque de pression."
     },
     {
       "addr": "0F84",
@@ -1174,9 +1174,9 @@
       "addr": "0F98",
       "name": "fn_moving_block_logic",
       "type": "code",
-      "status": "confirmed",
+      "status": "confirmed (axes PRECISES 2026-09-05)",
       "short": "Formalisées en symbole/asm",
-      "long": "Formalisées en symbole/asm. Même corps partagé (paramètre HL différent: #020A pour 0x37 via 0x0F93→JR, #0109 pour 0x36 via 0x0F98 direct — corrige une transcription antérieure #0A02 pour 0x37, probablement des octets inversés). Arme fn_position_pitch_sound_arm (0x0A07) — son de déplacement à hauteur dépendant de la position, calcule un vecteur cyclique via var_frame_counter"
+      "long": "Types 0x36/0x37, blocs mobiles a mouvement autonome. Corps partage avec fn_moving_block_logic_type37 (#0F93). LE PATCH DE HL N'EST PAS UN JEU DE CONSTANTES, CE SONT DEUX AXES : ses deux octets sont ecrits en code auto-modifiant (`ld a,h / ld (#0FBF),a` puis `ld a,l / ld (#0FD0),a`) sur deux adresses qui ne tombent PAS sur une frontiere d'instruction -- ce sont les octets de DEPLACEMENT de deux (ix+dd). Verifie octet par octet : `0FBD: dd 7e 01` = ld a,(ix+#01), deplacement en #0FBF ; `0FCE: dd 77 09` = ld (ix+#09),a, deplacement en #0FD0. Donc 0x36 (HL=#0109) lit grid_x et ecrit pending_vector_x -- oscillation en X ; 0x37 (HL=#020A) lit grid_y et ecrit pending_vector_y -- oscillation en Y. Meme routine, meme amplitude, meme vitesse : seul l'axe change. Cible = onde triangulaire f(var_frame_counter + bit de l'adresse du slot) repliee par bit4 sur 0..15, comparee a (coord+8)&#0F ; vecteur +/-1 (pas +/-3). Le bit de l'adresse du slot dephase les blocs d'une meme salle entre eux. `ld (ix+0B),#01` neutralise le decrement de prelude de RST 10 : aucun mouvement vertical."
     },
     {
       "addr": "0FD8",
@@ -1262,9 +1262,9 @@
       "addr": "1092",
       "name": "fn_ceiling_spike_ball_logic",
       "type": "code",
-      "status": "confirmed",
+      "status": "confirmed (chute RESOLUE 2026-09-05)",
       "short": "Logique du type d'entité 0x3F (boules à pics au plafond) — teste var_pseudo_random_acc (0x006D) < 0x10 pour se déclencher",
-      "long": "Logique du type d'entité 0x3F (boules à pics au plafond) — teste var_pseudo_random_acc (0x006D) < 0x10 pour se déclencher (piège pseudo-aléatoire, ~6%/tick), verrouille var_room_reset_flag_4 (0x0085) pour garantir une seule boule active à la fois par salle, applique la chute via RST 10. 12 occurrences dans la table d'entités correspondant exactement aux \"boules à pics au plafond\" (11 comptées visuellement + 1 masquée, comme soupçonné). Bonus: sur collision (bit2 de (ix+0C)) après la chute, arme fn_sound_arm_position_pitch_ch1 (0x0A22, via 0x10BD) — clic d'impact dont la hauteur dépend de grid_z"
+      "long": "Type 0x3F, boule a pics au plafond. Tant qu'elle n'est pas armee : ne fait rien si var_room_reset_flag_5 est pose, sinon tente de s'armer -- refuse si var_room_reset_flag_4 est deja pose (VERROU PAR SALLE : une seule boule tombe a la fois, deja etabli), puis tirage `var_pseudo_random_acc < #10`, soit environ 1 chance sur 16 par tick. Si elle s'arme : `set 2,(ix+off_state_flags_2)` et verrouille la salle. CHUTE (queue #10AF) : `rst #10` SANS JAMAIS ECRIRE (ix+0B) -- c'est donc la gravite generique, le decrement de prelude s'accumulant d'un tick a l'autre, chute ACCELEREE d'une unite par tick. Meme mecanisme que les corps poussables, et l'exact complement des routines qui, elles, ecrivent ce champ pour choisir leur sort (cube 0x5B, bloc mobile). A l'impact (bit2 de cooldown_or_collision_flags = collision Z) : desarme (`res 2`) et LIBERE le verrou de salle. Sinon, sifflement de chute via fn_sound_arm_position_pitch_ch1. La position n'est pas restauree : c'est la re-instanciation de la salle qui remet la boule au plafond."
     },
     {
       "addr": "10B6",
@@ -1976,25 +1976,25 @@
       "addr": "1D53",
       "name": "fn_pushable_block_logic",
       "type": "code",
-      "status": "confirmed",
+      "status": "confirmed (gravite PRECISEE 2026-09-05)",
       "short": "(salle 0xBB): logique du type d'entité 0x3E — \"bloc poussable\"",
-      "long": "(salle 0xBB): logique du type d'entité 0x3E — \"bloc poussable\". Réutilise la calibration de projection du bloc statique 0x1D8F (même sprite EXACT que le type 0x07, 0x59DB), applique le vecteur de déplacement (RST 10) après avoir appelé 0x22A5 (arrêt net dès la fin du contact — même mécanisme que fn_pushable_table_logic/0x54), arme un son dont la hauteur dépend de la position (fn_position_pitch_sound_arm 0x0A07) si un vecteur est en cours. Confirmé visuellement (\"blocs\", 2 instances empilées — delta grid_z=+0x0C, exactement l'élévation \"sur la table\" déjà confirmée ailleurs)."
+      "long": "Type 0x3E, bloc poussable. `1D53: CD 8F 1D CD A5 22 D7 CD 40 1A ...` -- CALL #22A5 (remise a zero du vecteur) AVANT le RST 10 qui l'applique, l'inverse de fn_pushable_table_logic (#1D71). Le joueur etant le slot 0 d'une table dispatchee en ordre croissant (fn_main_loop #05AE), la poussee est ecrite dans le bloc avant son propre tick, qui l'efface aussitot : LE BLOC RECOIT LE VECTEUR ET NE BOUGE PAS horizontalement. A trancher par trace live (salles 0xBB/0x08/0x58/0xC7). #22A5 n'efface que (ix+09)/(ix+0A), jamais (ix+0B) : le bloc TOMBE donc quand meme -- voir fn_sliding_chest_logic (#1D66)."
     },
     {
       "addr": "1D66",
       "name": "fn_sliding_chest_logic",
       "type": "code",
-      "status": "confirmed",
+      "status": "confirmed (gravite PRECISEE 2026-09-05)",
       "short": "Logique des types d'entité 0x54 (table) et 0x55 (coffre) — TOUTES DEUX appliquent le déplacement courant via RST 10 SANS résoudre",
-      "long": "Logique des types d'entité 0x54 (table) et 0x55 (coffre) — TOUTES DEUX appliquent le déplacement courant via RST 10 SANS résoudre elles-mêmes un vecteur (le vecteur est rempli par le moteur de collision GÉNÉRIQUE suite à un contact avec le joueur). DIFFÉRENCE CLÉ (confirmée empiriquement room 0x6C): 0x54 (table) appelle ENSUITE CALL 0x22A5 qui annule immédiatement le vecteur — la table s'arrête dès que le contact cesse. 0x55 (coffre) N'appelle PAS 0x22A5 — le vecteur persiste, le coffre CONTINUE à glisser après la poussée, exactement \"ils glissent tout seuls quand on les pousse, à la différence des tables\". Une seule instruction de différence explique tout le comportement observé."
+      "long": "Type 0x55, coffre glissant. `1D66: CD 8F 1D D7 CD 40 1A C8 C3 D2 1A` -- calibration, RST 10, test de vecteur nul, puis queue. PAS de CALL #22A5 : le vecteur en attente PERSISTE, le coffre continue de glisser apres la poussee jusqu'au premier obstacle (confirme salle 0x6C). N'ECRIT PAS (ix+0B), donc IL TOMBE : le decrement de prelude de RST 10 s'accumule, chute acceleree d'une unite par tick, sans vitesse terminale. L'atterrissage est stable parce que la primitive reecrit le delta ROGNE (`ld (ix+0B),h`, loc_243E)."
     },
     {
       "addr": "1D71",
       "name": "fn_pushable_table_logic",
       "type": "code",
-      "status": "confirmed",
+      "status": "confirmed (gravite PRECISEE 2026-09-05)",
       "short": "Logique des types d'entité 0x54 (table) et 0x55 (coffre) — TOUTES DEUX appliquent le déplacement courant via RST 10 SANS résoudre",
-      "long": "Logique des types d'entité 0x54 (table) et 0x55 (coffre) — TOUTES DEUX appliquent le déplacement courant via RST 10 SANS résoudre elles-mêmes un vecteur (le vecteur est rempli par le moteur de collision GÉNÉRIQUE suite à un contact avec le joueur). DIFFÉRENCE CLÉ (confirmée empiriquement room 0x6C): 0x54 (table) appelle ENSUITE CALL 0x22A5 qui annule immédiatement le vecteur — la table s'arrête dès que le contact cesse. 0x55 (coffre) N'appelle PAS 0x22A5 — le vecteur persiste, le coffre CONTINUE à glisser après la poussée, exactement \"ils glissent tout seuls quand on les pousse, à la différence des tables\". Une seule instruction de différence explique tout le comportement observé.",
+      "long": "Type 0x54, table poussable. `1D71: CD 8F 1D D7 CD 40 1A C8 CD A5 22 C3 D2 1A` -- RST 10 PUIS CALL #22A5 : elle avance du pas recu ce tick puis oublie son vecteur, donc s'arrete net des que le contact cesse. L'ordre inverse de fn_pushable_block_logic (#1D53), pour les memes instructions. N'ECRIT PAS (ix+0B), donc elle TOMBE -- voir fn_sliding_chest_logic (#1D66) pour le detail du mecanisme.",
       "decode_full_range": true
     },
     {
@@ -2442,9 +2442,9 @@
       "addr": "230C",
       "name": "fn_entity_clamp_pending_z",
       "type": "code",
-      "status": "confirmed",
+      "status": "confirmed (forme PRECISEE 2026-09-05)",
       "short": "Appelées par fn_entity_movement_vector_resolve (#23F7): réduisent pas à pas (fn_step_toward_zero #233B) le delta en attente sur leur axe",
-      "long": "Appelées par fn_entity_movement_vector_resolve (#23F7): réduisent pas à pas (fn_step_toward_zero #233B) le delta en attente sur leur axe jusqu'à ce que la position résultante reste dans une borne (var_room_data_field_2 #0074 pour Z, var_camera_reference/_y #0071/#0072 pour X/Y), posant le bit de collision correspondant de cooldown_or_collision_flags à chaque pas. HYPOTHÈSE: empêche le vecteur de déplacement de sortir de la salle courante/de traverser le plafond avant même le scan de collision solide"
+      "long": "Clamp de l'axe Z du vecteur en attente, appele par fn_entity_movement_vector_resolve. C'est un simple PLANCHER, et non la formule centree des axes X/Y : `grid_z + delta` compare a var_room_data_field_2, `ret nc` -- aucune valeur absolue, aucun plafond. Tant que la position resultante passe sous le plancher, pose le bit 2 de cooldown_or_collision_flags et reduit le delta de 1 vers zero (fn_step_toward_zero). Les 3 calibrations de tbl_room_master_coords donnent toutes #80 pour ce champ."
     },
     {
       "addr": "2322",
@@ -2548,9 +2548,9 @@
       "addr": "24EA",
       "name": "fn_entity_collide_axis_z",
       "type": "code",
-      "status": "confirmed",
+      "status": "confirmed (declencheur RESOLU 2026-09-05)",
       "short": "Scans de collision solide par axe",
-      "long": "Scans de collision solide par axe, appelés par fn_entity_movement_vector_resolve (#23F7): bouclent sur les 40 entités (fn_probe_entity_is_active_other #0E1C), testent le chevauchement sur les 2 AUTRES axes (via fn_aabb_axis_gap_*, en utilisant les deltas déjà résolus pour les axes précédents et 0 pour ceux pas encore traités — explique pourquoi l'ordre Z→X→Y compte), puis sur leur propre axe; si blocage: pose le bit de collision, synchronise un bit de state_flags_2 entre les 2 entités, propage le delta vers l'entité candidate si \"poussable\", et réduit le delta d'un pas (fn_step_toward_zero) en boucle"
+      "long": "Scan de collision solide sur l'axe Z, appele par fn_entity_movement_vector_resolve. Boucle sur les 40 entites, teste le chevauchement en X puis Y, puis le gap Z. AU CHEVAUCHEMENT, FAIT `set 3,(iy+off_state_flags_2)` -- il pose le bit 3 sur l'entite SUR LAQUELLE on repose, c'est-a-dire 'quelque chose s'est pose sur moi'. C'EST LA SOURCE DU DECLENCHEUR que fn_sinking_cube_logic (#0F67) et fn_dormant_block_transform (#0F84) consomment sans qu'on ait jamais su qui le posait : le mecanisme de plaque de pression est dans le scan generique, pas dans les routines de type. Fait ensuite heriter au mobile le vecteur (iy+09)/(iy+0A) de son support, axe par axe et SEULEMENT la ou le sien est nul (pour ne pas ecraser une poussee deja recue) -- 'porte par ce sur quoi je repose', ce qui fait qu'une pile poussee avance d'un bloc. Conditionne au bit 2 de flags du MOBILE (test symetrique inverse de celui des axes X/Y). Puis reduit le delta d'un pas et re-teste le gap Z."
     },
     {
       "addr": "2547",
@@ -2596,17 +2596,17 @@
       "addr": "258F",
       "name": "fn_entity_clamp_pending_x",
       "type": "code",
-      "status": "confirmed",
+      "status": "confirmed (forme PRECISEE 2026-09-05)",
       "short": "Appelées par fn_entity_movement_vector_resolve (#23F7): réduisent pas à pas (fn_step_toward_zero #233B) le delta en attente sur leur axe",
-      "long": "Appelées par fn_entity_movement_vector_resolve (#23F7): réduisent pas à pas (fn_step_toward_zero #233B) le delta en attente sur leur axe jusqu'à ce que la position résultante reste dans une borne (var_room_data_field_2 #0074 pour Z, var_camera_reference/_y #0071/#0072 pour X/Y), posant le bit de collision correspondant de cooldown_or_collision_flags à chaque pas. HYPOTHÈSE: empêche le vecteur de déplacement de sortir de la salle courante/de traverser le plafond avant même le scan de collision solide"
+      "long": "Clamp de l'axe X du vecteur en attente. C'est un RAYON AUTOUR DU CENTRE DE SALLE, pas un rectangle de murs : compare `|grid_x + delta - #80| + bbox_w` a var_camera_reference, d'ou le `sub #80` suivi d'un `neg` conditionnel. Tant que ca depasse : pose le bit 0 de cooldown_or_collision_flags et reduit le delta de 1 vers zero. C'EST CE CLAMP QUI RETIENT LES ENTITES DANS LA PIECE, pas le decor : les salles n'ont de murs que sur deux cotes sur quatre. Etant dans la primitive generique, il s'applique a tout ce qui bouge -- joueur, gardes, meubles pousses. Deux inhibitions en tete : `and #F0` sur le cooldown, et `bit 0,(ix+off_flags)` (porte franchie) -- cette derniere est ce qui autorise le joueur a sortir par une porte, et rien d'autre ne porte ce bit."
     },
     {
       "addr": "25BA",
       "name": "fn_entity_clamp_pending_y",
       "type": "code",
-      "status": "confirmed",
+      "status": "confirmed (forme PRECISEE 2026-09-05)",
       "short": "Appelées par fn_entity_movement_vector_resolve (#23F7): réduisent pas à pas (fn_step_toward_zero #233B) le delta en attente sur leur axe",
-      "long": "Appelées par fn_entity_movement_vector_resolve (#23F7): réduisent pas à pas (fn_step_toward_zero #233B) le delta en attente sur leur axe jusqu'à ce que la position résultante reste dans une borne (var_room_data_field_2 #0074 pour Z, var_camera_reference/_y #0071/#0072 pour X/Y), posant le bit de collision correspondant de cooldown_or_collision_flags à chaque pas. HYPOTHÈSE: empêche le vecteur de déplacement de sortir de la salle courante/de traverser le plafond avant même le scan de collision solide"
+      "long": "Clamp de l'axe Y du vecteur en attente : strictement symetrique de fn_entity_clamp_pending_x (#258F), avec var_camera_reference_y, bbox_h, le bit 1 de cooldown_or_collision_flags, et le delta porte par L au lieu de C. Voir #258F pour la forme du test et ses inhibitions."
     },
     {
       "addr": "25E5",
