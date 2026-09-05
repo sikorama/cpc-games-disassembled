@@ -44,7 +44,7 @@ import type { Obstacle } from "../physics/obstacles";
 import type { SpriteIndex } from "../data/spriteManifest";
 import type { GuardSpawn } from "../data/types";
 import { loadFramesByType, type LoadedFrame } from "./spriteFrames";
-import { ROOM_EDGE_MIN, ROOM_EDGE_MAX } from "./roomTransition";
+import { clampDeltaToRoom, type RoomBound } from "../physics/roomBounds";
 import { createWalkAnimState, advanceWalkAnim, WALK_PHASE_COUNT, type WalkAnimState } from "./walkAnimation";
 import {
   orientationFromVector,
@@ -152,18 +152,24 @@ export function guardBox(guard: GuardState): Box3 {
  * Les salles n'ont de murs que sur DEUX côtés ("boîte ouverte", voir
  * scene/room.ts) -- sans mur d'un côté donné, rien n'arrêterait le garde
  * dans `obstacles` et il sortirait indéfiniment de la salle (constaté).
- * Contrairement au joueur, qui franchit ces bords pour changer de salle
- * (scene/roomTransition.ts), le garde reste confiné : on réutilise les
- * MÊMES constantes de bord (`ROOM_EDGE_MIN`/`MAX`) comme un mur invisible.
- * Approximation reconnue : ce bord peut être nettement décalé des boîtes
- * de mur (`physics/obstacles.ts`, par point d'ancrage) -- deux mécanismes
- * distincts, sans lien géométrique entre eux. Acceptable tant que le
- * garde reste dans la salle (confirmé) ; à resserrer si le décalage
- * visuel gêne. */
-export function updateGuard(guard: GuardState, obstacles: Obstacle[]): void {
+ * Ce n'est PAS une lacune du portage à rustiner : le jeu d'origine ne compte
+ * pas non plus sur ses murs pour ça, il clampe le déplacement dans sa
+ * primitive générique (physics/roomBounds.ts). On utilise donc désormais la
+ * vraie borne ROM de la salle, à la place des constantes `ROOM_EDGE_MIN/MAX`
+ * qui servaient de mur invisible -- celles-ci restent ce qu'elles sont, un
+ * seuil de FRANCHISSEMENT pour le joueur (scene/roomTransition.ts), et n'ont
+ * jamais été une limite physique. */
+export function updateGuard(guard: GuardState, obstacles: Obstacle[], bounds: RoomBound): void {
   const axis = DIRECTION_AXIS[guard.direction];
   const step = DIRECTION_STEP[guard.direction];
-  const delta = step * GUARD_STEP;
+  const wanted = step * GUARD_STEP;
+  // Clamp de salle AVANT le scan de collision solide, comme la ROM.
+  const delta = clampDeltaToRoom(
+    axis === "x" ? guard.gridX : guard.gridY,
+    wanted,
+    GUARD_HALF_EXTENT,
+    axis === "x" ? bounds.x : bounds.y,
+  );
   const res = resolveAxis(guardBox(guard), delta, axis, obstacles);
 
   // LE GARDE POUSSE, exactement comme le joueur, et ce n'est pas une
@@ -174,16 +180,16 @@ export function updateGuard(guard: GuardState, obstacles: Obstacle[]): void {
   // déjà confirmé EN JEU : « impact gardien/table synchronisé, table poussée
   // d'un cran à chaque demi-tour du gardien ». Le pousseur n'est donc pas une
   // propriété du joueur, c'est une propriété du mouvement.
-  res.blocker?.pushTarget?.receivePush(axis, delta);
-  let blocked = res.blocked;
-  const coordAfter = (axis === "x" ? guard.gridX : guard.gridY) + res.delta;
+  // Le vecteur transmis reste celui d'ORIGINE, pas le clampé : la ROM recopie
+  // `(ix+09)`, encore intact au moment du scan (voir scene/pushables.ts).
+  res.blocker?.pushTarget?.receivePush(axis, wanted);
+  // Buter sur la limite de salle compte comme un blocage : la ROM y pose le
+  // même bit de collision que pour un mur, et c'est ce bit que lit la logique
+  // de patrouille pour faire demi-tour.
+  let blocked = res.blocked || delta !== wanted;
 
-  if (axis === "x") {
-    guard.gridX = Math.min(Math.max(coordAfter, ROOM_EDGE_MIN), ROOM_EDGE_MAX);
-  } else {
-    guard.gridY = Math.min(Math.max(coordAfter, ROOM_EDGE_MIN), ROOM_EDGE_MAX);
-  }
-  if (coordAfter < ROOM_EDGE_MIN || coordAfter > ROOM_EDGE_MAX) blocked = true;
+  if (axis === "x") guard.gridX += res.delta;
+  else guard.gridY += res.delta;
 
   // Orientation dérivée du vecteur VOULU, pas du déplacement effectivement
   // appliqué : une frame bloquée a un delta nul, et la règle ROM y

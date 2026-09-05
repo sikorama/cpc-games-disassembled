@@ -306,6 +306,23 @@ libre produirait des parties injouables que l'original ne peut pas produire.
 À ne pas confondre avec les entités de salle : un objet visible dans une salle
 vient du catalogue, pas des données de cette salle.
 
+## Limite de salle
+Ce qui empêche une entité de quitter la pièce — et ce ne sont **pas** les murs.
+Les salles n'ont de décor que sur deux côtés ; la limite est une contrainte
+appliquée au *déplacement* de toute entité mobile, sous la forme d'un **rayon
+autour du centre de la pièce**, la demi-étendue de l'entité comprise.
+
+Trois conséquences qui se voient en jeu : elle s'applique aussi bien au
+personnage qu'aux ennemis et aux meubles poussés ; elle est plus serrée sur
+l'axe court des salles au format non carré ; et elle est levée pour le
+personnage au moment où il franchit une porte, ce qui est précisément ce qui
+lui permet de sortir alors que le reste ne le peut pas.
+
+À distinguer du **seuil de franchissement**, qui est la coordonnée à partir de
+laquelle le portage décide qu'on change de salle : c'est un mécanisme de
+navigation, pas une limite physique, et les deux valeurs n'ont aucune raison de
+coïncider.
+
 ## Table de remap (pièces asymétriques)
 Correspondance `(type de tuile, flip) → (type de tuile, flip)` nécessaire
 pour afficher correctement les pièces asymétriques (murs 0x0A-0x0F,

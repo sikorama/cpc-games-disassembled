@@ -7,6 +7,7 @@ import { loadSpriteIndex } from "./data/spriteManifest";
 import { loadRoom, type LoadedRoom, type RoomView } from "./scene/room";
 import { createKeyboardState, type KeyboardState } from "./input/keyboard";
 import { buildObstacles, type Obstacle } from "./physics/obstacles";
+import { boundsForRoom } from "./physics/roomBounds";
 import {
   createPushables,
   pushableDrawCalls,
@@ -288,10 +289,16 @@ async function main() {
       // basculement, invisible mais faux.
       updateDayNight(state.dayNight);
 
+      // Limite de salle : dépend de la salle courante (3 calibrations selon
+      // le ratio d'aspect, physics/roomBounds.ts), donc relue à chaque tick
+      // plutôt que mise en cache -- une lecture de table, et une source de
+      // vérité unique quand on change de salle.
+      const bounds = boundsForRoom(state.roomId);
+
       const intent = readIntent(state.controlMode, state.input);
       updatePlayer(state.player, intent, obstacles, state.dayNight);
       for (const guard of state.guards) {
-        updateGuard(guard, obstacles);
+        updateGuard(guard, obstacles, bounds);
       }
       // APRÈS le joueur et les gardes, jamais avant : le joueur est le slot 0
       // de la table d'entités et fn_main_loop dispatche en ordre croissant
@@ -299,7 +306,7 @@ async function main() {
       // donc déjà écrites quand les corps jouent le leur -- et c'est
       // précisément cet ordre qui décide du comportement du bloc 0x3E (voir
       // physics/solidTypes.ts).
-      updatePushables(state.pushables, state.obstacles);
+      updatePushables(state.pushables, state.obstacles, bounds);
 
       const crossing = detectEdgeCrossing(state.player);
       if (crossing) {
