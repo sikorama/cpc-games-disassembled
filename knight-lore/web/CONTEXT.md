@@ -280,6 +280,32 @@ visuellement identiques au petit bloc en relèvent (bloc mobile, cube qui
 s'enfonce), et c'est ce qui les distingue du bloc poussable : ils ne portent
 PAS le bit de poussée.
 
+## Graine de partie
+Unique nombre dont découle tout ce qui est décidé au **lancement** d'une
+partie : la salle où l'on commence et l'attribution des objets. Dans
+l'original c'est un seul octet, accumulé au rythme des frames jusqu'à ce que
+le joueur appuie — le hasard vient donc du *moment* où l'on lance, pas d'un
+générateur dédié.
+
+Conséquence à garder en tête : une partie de Knight Lore est entièrement
+déterminée par ce nombre. Deux parties de même graine sont la même partie.
+
+## Catalogue d'objets
+Liste globale des emplacements d'objets à ramasser, **séparée des salles**.
+Chaque emplacement est fixe — position et salle gravées dans les données — et
+ce qui change d'une partie à l'autre est uniquement **quel type d'objet s'y
+trouve**.
+
+Et cette réattribution n'est pas un tirage par emplacement : c'est une
+**rotation** de la liste des types sur les emplacements, décalée d'un cran
+selon la [[Graine de partie]]. Il n'existe donc qu'autant de mondes possibles
+qu'il y a de types, et chaque type est garanti présent en nombre égal : aucune
+partie ne peut manquer d'un objet. Traiter la distribution comme un tirage
+libre produirait des parties injouables que l'original ne peut pas produire.
+
+À ne pas confondre avec les entités de salle : un objet visible dans une salle
+vient du catalogue, pas des données de cette salle.
+
 ## Table de remap (pièces asymétriques)
 Correspondance `(type de tuile, flip) → (type de tuile, flip)` nécessaire
 pour afficher correctement les pièces asymétriques (murs 0x0A-0x0F,

@@ -17,6 +17,7 @@ import type { Obstacle } from "../physics/obstacles";
 import type { MoveIntent } from "../input/controlMode";
 import { TICK_HZ } from "../game/tick";
 import type { DayNightState } from "../game/dayNight";
+import { gameplayRng } from "../game/random";
 import type { SpriteDrawCall } from "../gl/spriteBatch";
 import type { SpriteIndex } from "../data/spriteManifest";
 import { rotateGrid, viewNeedsFlip, type ViewAngle } from "../render/isoMath";
@@ -319,13 +320,14 @@ export function playerBox(player: PlayerState): Box3 {
  * courant. C'est cette dernière règle qui fait l'effet visuel (ça tremble) ;
  * le tirage lui-même est de l'aléa.
  *
- * ÉCART ASSUMÉ (web/DEVIATIONS.md) : la SOURCE de l'aléa n'est pas portable --
- * elle mélange le registre `R` du Z80 et un octet lu à une adresse dérivée du
- * compteur de frames. On reproduit fidèlement la règle d'anti-répétition, qui
- * est observable, et pas la séquence, qui ne l'est pas.
+ * La SOURCE du tirage est celle du portage (`game/random.ts`) et non celle du
+ * Z80 : ce n'est pas un écart, c'est une adaptation d'implémentation -- la
+ * séquence d'octets du registre `R` n'est pas un comportement observable du
+ * jeu. La règle d'anti-répétition, elle, l'est : c'est elle qui produit le
+ * tremblement, et elle est reproduite exactement.
  */
 function pickTransformType(current: number): number {
-  const draw = TRANSFORM_TYPE_BASE | (Math.floor(Math.random() * TRANSFORM_TYPE_COUNT) & 0x03);
+  const draw = TRANSFORM_TYPE_BASE | (gameplayRng.nextByte() & 0x03);
   return draw === current ? draw ^ 0x01 : draw;
 }
 

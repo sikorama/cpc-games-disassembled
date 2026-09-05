@@ -1525,6 +1525,55 @@ su lire ici ? » mais « qui d'autre touche à cet octet ? ». Voir aussi §23 :
 octet correctement décrit mais mal situé dans le temps se documente quand même
 de travers.
 
+## 30. Un artefact extrait peut contenir de l'ÉTAT D'EXÉCUTION déguisé en données
+
+**Symptôme.** Un outil exporte proprement le contenu des salles depuis une
+machine qui tourne, et le portage s'en sert comme référence. Tout est
+cohérent, rien ne cloche visuellement — et pourtant une partie de cet export
+n'est pas une donnée du jeu : c'est le résultat d'UNE partie particulière,
+figé au moment de la capture.
+
+**Le cas concret.** Le manifest des 128 salles contient 32 objets à ramasser,
+avec leur type. Ces types n'existent nulle part dans les données du jeu : ils
+sont **écrits au lancement de chaque partie** par un randomiseur, dans une
+table de catalogue globale. Le manifest avait donc gelé la partie qui avait
+servi à l'extraction. Un portage qui l'aurait cru aurait rejoué éternellement
+la même distribution d'objets, en croyant reproduire le jeu.
+
+**Ce qui l'a révélé, et c'est reproductible.** Comparer l'artefact extrait à
+la table STATIQUE lue dans le dump, sur les champs qui devraient être
+identiques. Ici : les 32 positions concordaient, les 32 types formaient une
+rotation régulière — et cette rotation correspondait exactement à une seule
+valeur de graine. Un artefact qui code une valeur de graine unique n'est pas
+une donnée, c'est un instantané.
+
+**Le signal à reconnaître.** Une régularité *trop* parfaite dans des valeurs
+censées être variées. Les 8 types d'objets apparaissaient exactement 4 fois
+chacun sur 32 emplacements — une distribution qu'aucun placement à la main ne
+produit, et qui trahissait une formule. Chercher la formule a donné le
+randomiseur, et le randomiseur a donné le statut réel de l'artefact.
+
+**La règle.** Un outil qui extrait depuis une machine EN COURS D'EXÉCUTION
+capture, par construction, un mélange de données et d'état. Les séparer n'est
+pas optionnel :
+
+- ce qui est identique d'une partie à l'autre est une **donnée** ;
+- ce qui change au lancement ou en cours de route est de l'**état**, et il ne
+  doit pas être exporté comme une donnée — ou, s'il l'est, doit être marqué
+  comme tel dans l'artefact.
+
+Le test qui tranche : *relancer une partie changerait-il cette valeur ?* Si
+oui, elle n'a rien à faire dans un fichier de données. À défaut de pouvoir
+relancer, la comparaison avec le dump statique répond aussi — la ROM ne ment
+pas sur ce qu'elle contient avant exécution.
+
+**Corollaire pour l'extraction elle-même.** Un extracteur devrait exporter les
+champs dont il sait qu'ils sont statiques, et OMETTRE ceux qu'il sait
+générés, plutôt que tout copier « pour ne rien perdre ». Omettre un champ
+généré est une information ; l'exporter en silence en détruit une. C'est le
+prolongement direct de §24 (un outil exporte des faits, jamais une politique) :
+un état d'exécution n'est pas un fait sur le jeu, c'est un fait sur une partie.
+
 ## Limites connues de cette méthode
 
 - Le sondage par breakpoint + poll a un coût réel (chaque hit/step est

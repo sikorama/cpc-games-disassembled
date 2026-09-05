@@ -93,29 +93,6 @@ une décision de gameplay.
 directional par défaut donne le mode qui n'est **pas** celui du clavier
 d'origine.
 
-### Séquences pseudo-aléatoires non reproductibles
-Le portage tire ses valeurs pseudo-aléatoires avec `Math.random()`. Les
-*règles* qui encadrent chaque tirage sont reproduites fidèlement ; la
-*séquence*, non.
-
-*Fait ROM* : `var_pseudo_random_acc` (#006D) est un accumulateur mélangé deux
-fois par tour de boucle — une fois **par entité dispatchée** (`acc += R`, le
-registre de rafraîchissement du Z80) et une fois par frame
-(`acc += mem[var_frame_counter] + bas + haut`, qui traite la valeur du
-compteur de frames comme une **adresse** et lit l'octet qui s'y trouve —
-`asm/code/low_ram_and_boot.asm:246-272`).
-
-*Pourquoi c'est irréductible* : ni le registre `R` ni la lecture d'un octet à
-une adresse arbitraire n'ont d'équivalent dans le portage. Reproduire la
-séquence exigerait d'émuler la disposition mémoire du CPC, ce qui n'est pas le
-projet. Cadence et distribution sont fidèles, l'ordre ne l'est pas.
-
-*Ce que ça affecte aujourd'hui* : l'ordre des 4 types transitoires pendant la
-transformation (`scene/player.ts`, `pickTransformType`). La règle observable —
-« jamais deux fois le même d'affilée », obtenue par un `xor #01` quand le
-tirage retombe sur le type courant — est, elle, reproduite exactement : c'est
-elle qui produit le tremblement, pas la séquence.
-
 ### Formes de collision par entité (sphère pour les ennemis ronds)
 Prévu, pas encore implémenté.
 
@@ -175,8 +152,8 @@ n'a que 6 phases, et la routine force explicitement les 3 bits bas à 6 ou 7
 `< 0x02` → pose 6, `>= 0xFE` → pose 7, soit ~0,8 % chacune. Voir
 `docs/METHODOLOGY.md` §25bis.
 
-*Rien ne bloque* : c'est du travail restant, pas une information manquante. La
-séquence exacte, elle, relèvera de *Séquences pseudo-aléatoires* ci-dessus.
+*Rien ne bloque* : c'est du travail restant, pas une information manquante.
+La source du tirage, elle, n'est pas un écart -- voir `game/random.ts`.
 
 ### Comportements dynamiques des blocs — RÉVISÉ 2026-09-04
 
