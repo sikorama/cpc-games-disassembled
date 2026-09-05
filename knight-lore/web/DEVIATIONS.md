@@ -220,16 +220,6 @@ placer le joueur contre un 0x3E (salle 0xBB, 0x08, 0x58 ou 0xC7) et regarder
 si `grid_x`/`grid_y` du bloc bougent. Si oui, une seule valeur d'énumération
 change dans `physics/solidTypes.ts`.
 
-### Corps poussables sans gravité
-Table, coffre et bloc gardent leur `grid_z` de manifest ; poussés dans le
-vide, ils ne tombent pas.
-
-*Fait ROM* : **pas encore désassemblé** pour ces types. `RST 10` fait bien un
-`dec (ix+0B)` avant de résoudre, mais aucune chute n'a été tracée pour eux —
-et les données vont dans l'autre sens : plusieurs instances sont capturées
-stables à `0x8C` ou `0x98` sans rien en dessous (salles 0x08, 0x40, 0x58).
-Les faire tomber serait inventer une mécanique.
-
 ### Contrainte physique des portes
 Les montants (0x02/0x03) sont traversables. Reste à traiter la **hauteur**
 de porte (ne pas pouvoir sauter par-dessus une porte basse).
@@ -249,6 +239,18 @@ effacée : sans ça, la même supposition se réinstalle.
   L'original a deux modes de contrôle, et « DIRECTIONAL CONTROL » fait
   exactement ça (#006C bit3). Seules les diagonales *tenues* restent un
   écart.
+- **« Les corps poussables n'ont pas de gravité »** — faux, sur les deux
+  jambes de l'argument. (1) Le mécanisme était déjà connu sans qu'on le voie :
+  aucune des trois routines poussables n'écrit `(ix+0B)`, donc le `dec (ix+0B)`
+  du prélude de `RST 10` s'accumule et les fait tomber, en accélérant d'une
+  unité par tick. C'est le MÊME mécanisme que la descente du cube 0x5B, lu deux
+  fois sans être reconnu. (2) L'argument de données — « plusieurs instances
+  capturées stables à 0x8C/0x98 sans rien en dessous » — ne tient pas : re-passé
+  sur le manifest, les **29** instances poussables surélevées ont toutes une
+  entité sous elles, sans exception. Une affirmation d'ABSENCE tirée des données
+  doit dire comment l'absence a été vérifiée, sinon elle bloque du travail pour
+  rien.
+
 - **« Rotation d'un bit par tick, donc diagonales émergentes tenues »** —
   faux. Les deux bits sont écrits dans la même frame
   (`asm/code/doors_and_player_logic.asm:421` puis `:425`), sans état
