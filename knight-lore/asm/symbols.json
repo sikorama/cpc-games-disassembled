@@ -1705,7 +1705,7 @@
       "type": "code",
       "status": "confirmed",
       "short": "Logique des types 0x78-0x7E: identique à 0x17DC (incrémente (ix+00) toutes les 2 frames) — 2e moitié de la séquence de (dé)matérialisation.",
-      "long": "Logique des types 0x78-0x7E: identique à 0x17DC (incrémente (ix+00) toutes les 2 frames) — 2e moitié de la séquence de (dé)matérialisation.",
+      "long": "Logique des types 0x78-0x7E, SECONDE moitie de la sequence de (de)materialisation : throttle `1 frame sur 2` sur var_frame_counter, puis `inc (ix+00)`. La reapparition dure donc deux fois plus longtemps que la disparition -- 8 images a 1 frame contre 8 images a 2 frames.",
       "decode_full_range": true
     },
     {
@@ -1714,8 +1714,16 @@
       "type": "code",
       "status": "confirmed",
       "short": "Logique du type 0x7F (fin de la séquence de matérialisation) — restaure le type stable du joueur depuis (ix+10)",
-      "long": "Logique du type 0x7F (fin de la séquence de matérialisation) — restaure le type stable du joueur depuis (ix+10) (déjà connu, mémorise le type \"normal\" jour/nuit), efface le bit 6 de (ix+0D), puis jp 0x05D4 (reprise NORMALE de la boucle de jeu, PAS un restart complet).",
+      "long": "Logique du type 0x7F, DERNIERE image de la (de)materialisation : efface le bit 6 de state_flags_2 (fin de sequence), puis `ld a,(ix+#10) / ld (ix+#00),a` -- le type final est LU dans +#10 et non recalcule. RESOUT l'usage de ce champ : fn_init_room_entities (#29B4) y a ecrit la forme correspondant au cycle jour/nuit courant, ce qui fait qu'on peut mourir loup-garou et reapparaitre chevalier. Termine par `jp #05D4` : l'entite est re-dispatchee immediatement avec son nouveau type, sans attendre la frame suivante.",
       "decode_full_range": true
+    },
+    {
+      "addr": "17CC",
+      "name": "fn_player_dematerialize_start",
+      "type": "code",
+      "status": "confirmed",
+      "short": "Point d'entree de la desintegration du joueur (type 0x70)",
+      "long": "Cible du `jp #17CC` de fn_player_logic (#20D3) quand le bit 6 de state_flags_2 est pose sur le joueur : force `type = 0x70`, premiere image de la sequence de (de)materialisation, propage le bit 6 a l'entite compagne (`set 6,(ix+#29)`, pose par l'appelant) puis rejoint la queue sonore commune. A partir de la, c'est le TYPE de l'entite qui porte l'etat d'animation : chacune des 16 images 0x70-0x7F dispatche vers sa propre routine (#17DC, #17FC, #17A7, #17BC). Le poseur du bit 6 sur le JOUEUR reste non localise -- c'est le meme angle mort que le declencheur de perte de vie (voir #29B4)."
     },
     {
       "addr": "17DC",
@@ -1723,7 +1731,7 @@
       "type": "code",
       "status": "confirmed",
       "short": "Logique des types 0x70-0x76: incrémente (ix+00) toutes les 2 frames (throttle via var_frame_counter 0x006A) — 1re moitié de la séquence de",
-      "long": "Logique des types 0x70-0x76: incrémente (ix+00) toutes les 2 frames (throttle via var_frame_counter 0x006A) — 1re moitié de la séquence de (dé)matérialisation du joueur. Voir 0x17A7/0x17FC/0x17BC pour la suite. Proposé et confirmé: \"animation pour faire disparaître/rematérialiser le joueur, la même au lancement du jeu et après une perte de vie\". Type 0x78 observé au tout premier lancement de partie ET lors du reset après mort.",
+      "long": "Logique des types 0x70-0x76, PREMIERE moitie de la sequence de (de)materialisation : calibration puis `inc (ix+00)` a CHAQUE frame -- la disparition est donc rapide, une image par frame. Arme aussi un son de hauteur derivee du type. A comparer avec fn_player_materialize_anim_b (#17A7), qui fait la meme chose deux fois plus lentement : l'asymetrie entre disparition et reapparition est structurelle, pas un reglage.",
       "decode_full_range": true
     },
     {
@@ -1740,7 +1748,7 @@
       "type": "code",
       "status": "confirmed",
       "short": "Logique du type 0x77 (point de bascule entre les deux moitiés de la séquence 0x70-0x7F) — calibration projection puis jp 0x1239",
-      "long": "Logique du type 0x77 (point de bascule entre les deux moitiés de la séquence 0x70-0x7F) — calibration projection puis jp 0x1239 (remet (ix+00)=1, état générique).",
+      "long": "Logique du type 0x77, PIVOT de la sequence de (de)materialisation -- l'image la plus reduite (hauteur 20 contre 24 aux extremites). Ne fait PAS avancer le type : elle saute en #1239, qui pose `type = 0x01`, le slot INACTIF. Le joueur disparait donc reellement ici, et c'est la reinitialisation de salle qui le recree ensuite a 0x78. Explique pourquoi le checkpoint de porte ecrit precisement 0x78 dans le template : c'est la premiere image de la moitie 'reapparition', choisie pour ne pas rejouer la desintegration.",
       "decode_full_range": true
     },
     {

@@ -37,6 +37,8 @@ import {
   playerDrawCalls,
   armTransformCooldownAfterDoor,
   playerBox,
+  startDematerialize,
+  startMaterialize,
   LEGS_BASE_DAY,
   LEGS_BASE_NIGHT,
   type PlayerState,
@@ -121,6 +123,11 @@ interface AppState {
    * `fn_init_room_entities` relit à la mort. D'où « on réapparaît là où on est
    * entré dans la pièce ». */
   checkpoint: { gridX: number; gridY: number; gridZ: number };
+  /** Où en est la séquence de mort. `null` = on joue. La ROM n'a pas cet état :
+   * chez elle c'est le TYPE du joueur qui le porte (0x70-0x7F dispatchent vers
+   * les routines d'animation). Le portage garde le joueur natif, il lui faut
+   * donc dire explicitement ce que le type disait tout seul. */
+  deathPhase: null | "vanishing" | "appearing";
   /** Objets à ramasser présents dans la salle courante, tirés du CATALOGUE et
    * non du manifest (voir scene/objects.ts). */
   roomObjects: RoomObject[];
@@ -193,6 +200,7 @@ async function main() {
     lives: createLivesState(),
     gameOver: null,
     checkpoint: { ...PLAYER_SPAWN },
+    deathPhase: null,
     roomObjects: startObjects,
     input: createKeyboardState(window),
     transitioning: false,
@@ -367,9 +375,28 @@ async function main() {
       // docs/SYMBOLS.md #29B4 et game/lives.ts). L'EFFET, lui, est lu dans le
       // code. Testé APRÈS que tout ait bougé ce tick, pour qu'un ennemi qui
       // vient sur le joueur compte autant que l'inverse.
-      if (playerTouchesHazard(state)) {
-        killPlayer(state);
-        break; // la salle vient d'être réinitialisée : ce tick s'arrête là
+      // SÉQUENCE DE MORT EN TROIS TEMPS, comme le jeu : le joueur se
+      // désintègre SUR PLACE, puis la salle est réinitialisée et il réapparaît
+      // à la porte par laquelle il est entré. Les deux animations sont les
+      // deux moitiés d'une même séquence (scene/player.ts) -- et la seconde
+      // est aussi celle du début de partie.
+      if (state.deathPhase === null) {
+        if (playerTouchesHazard(state)) {
+          startDematerialize(state.player);
+          state.deathPhase = "vanishing";
+        }
+      } else if (!state.player.materialize) {
+        if (state.deathPhase === "vanishing") {
+          // Le joueur a disparu : c'est ICI que la ROM perd la vie et
+          // recharge la salle (fn_init_room_entities puis fn_init_room), pas
+          // au moment du contact.
+          killPlayer(state);
+          if (state.gameOver) break;
+          startMaterialize(state.player);
+          state.deathPhase = "appearing";
+        } else {
+          state.deathPhase = null;
+        }
       }
 
       const crossing = detectEdgeCrossing(state.player);
@@ -440,6 +467,10 @@ function playerTouchesHazard(state: AppState): boolean {
   // ROM ne fait tourner ni entrée, ni gravité, ni collision pour lui. Le
   // laisser mourir à ce moment-là inventerait une vulnérabilité.
   if (state.player.transform) return false;
+  // Ni pendant la (dé)matérialisation : le joueur y est déjà en train de
+  // mourir, ou pas encore revenu. Sans ça il se retuerait en boucle sur le
+  // garde qu'il vient de toucher.
+  if (state.player.materialize) return false;
   if (state.guards.some((guard) => boxesOverlap(box, guardBox(guard)))) return true;
   return state.spikeBalls.some((ball) => boxesOverlap(box, ball.box()));
 }

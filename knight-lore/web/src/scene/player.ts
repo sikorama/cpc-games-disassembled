@@ -97,6 +97,49 @@ const TRANSFORM_THROTTLE = 4;
  * frames, donc -- et le déclencheur exige ce quartet nul (`and #F0 / ret nz`). */
 const TRANSFORM_COOLDOWN_ON_DOOR = 3;
 
+// ---------------------------------------------------------------------------
+// (DÉ)MATÉRIALISATION -- types 0x70-0x7F
+// ---------------------------------------------------------------------------
+//
+// L'animation de désintégration/réapparition, celle qu'on voit à la mort ET au
+// lancement de la partie. Structure lue dans la table de dispatch, et elle est
+// ASYMÉTRIQUE :
+//
+//   0x70-0x76  -> #17DC : `inc (ix+00)` à CHAQUE frame        (disparition rapide)
+//   0x77       -> #17FC : pose `type = 0x01`, le slot INACTIF (le joueur s'éteint)
+//   0x78-0x7E  -> #17A7 : `inc (ix+00)` 1 frame sur 2          (réapparition lente)
+//   0x7F       -> #17BC : fin -- `ld a,(ix+10) / ld (ix+00),a`
+//
+// Deux conséquences qu'on ne devinerait pas :
+//
+// 1. La réapparition est DEUX FOIS PLUS LENTE que la disparition. Ce n'est pas
+//    un effet de mise en scène ajouté ici, c'est deux routines différentes.
+// 2. Le type final n'est pas recalculé : il est LU dans `+0x10`, que
+//    `fn_init_room_entities` a rempli avec la forme correspondant au cycle
+//    jour/nuit courant. C'est ce qui fait qu'on peut mourir loup-garou et
+//    réapparaître chevalier -- et ça résout au passage l'usage de ce champ,
+//    resté ouvert jusqu'au 2026-09-05.
+//
+// Le `0x78` que le checkpoint de porte écrit dans le template n'est donc pas
+// une sentinelle arbitraire : c'est la PREMIÈRE IMAGE de la moitié
+// « réapparition », choisie pour que la salle rechargée fasse réapparaître le
+// joueur sans rejouer la désintégration.
+const MATERIALIZE_FIRST = 0x70;
+/** Dernière image de la disparition : la ROM y éteint l'entité. */
+const MATERIALIZE_PIVOT = 0x77;
+/** Première image de la réapparition -- la valeur du checkpoint. */
+const MATERIALIZE_REAPPEAR = 0x78;
+const MATERIALIZE_LAST = 0x7f;
+/** Sous-cadence de la seconde moitié seulement (`and #01` sur le compteur). */
+const MATERIALIZE_SLOW_THROTTLE = 2;
+
+/** Animation de (dé)matérialisation en cours. */
+export interface MaterializeState {
+  /** Type ROM courant, 0x70-0x7F. */
+  type: number;
+  throttle: number;
+}
+
 /** Élévation du corps au-dessus des jambes, en unités de grille Z.
  * CONFIRMÉ : `+0x0C` posé par fn_entity_materialize_dispatch_a
  * (asm/code/doors_and_player_logic.asm:1370-1372). C'est une grandeur du
@@ -162,6 +205,10 @@ export interface PlayerFrames {
   /** Les 4 types transitoires 0x5C-0x5F, affichés pendant la transformation.
    * Un seul sprite, pas une paire corps/jambes -- voir `TransformState`. */
   transform: LoadedFrame[];
+  /** Les 16 images 0x70-0x7F de la (dé)matérialisation. Leurs hauteurs
+   * décroissent jusqu'au pivot puis remontent (24..20..24) : le sprite raconte
+   * déjà la disparition, il n'y a aucun effet à ajouter. */
+  materialize: LoadedFrame[];
 }
 
 /**
@@ -210,6 +257,11 @@ export interface PlayerState {
   legsBase: number;
   /** Transformation en cours, ou `null`. */
   transform: TransformState | null;
+  /** (Dé)matérialisation en cours, ou `null`. Prioritaire sur tout le reste :
+   * pendant cette animation la ROM ne fait tourner ni entrée, ni saut, ni
+   * gravité, ni collision pour le joueur -- sa logique EST l'animation, via la
+   * table de dispatch sur son type. */
+  materialize: MaterializeState | null;
   /** Quartet haut de `cooldown_or_collision_flags` (+0x0C), en ticks.
    * Bloque la transformation juste après un franchissement de porte. */
   transformCooldown: number;
@@ -264,12 +316,17 @@ export async function loadPlayerFrames(
   // la transformation dure 32 ticks et ne peut pas attendre un `fetch`. Le
   // cache de textures partagé rend le coût négligeable de toute façon.
   const transformTypes = Array.from({ length: TRANSFORM_TYPE_COUNT }, (_, i) => TRANSFORM_TYPE_BASE + i);
-  const [day, night, transform] = await Promise.all([
+  const materializeTypes = Array.from(
+    { length: MATERIALIZE_LAST - MATERIALIZE_FIRST + 1 },
+    (_, i) => MATERIALIZE_FIRST + i,
+  );
+  const [day, night, transform, materialize] = await Promise.all([
     loadForm(LEGS_BASE_DAY, "joueur"),
     loadForm(LEGS_BASE_NIGHT, "loup-garou"),
     loadFramesByType(gl, spriteIndex, transformTypes, "transformation"),
+    loadFramesByType(gl, spriteIndex, materializeTypes, "matérialisation"),
   ]);
-  return { day, night, transform };
+  return { day, night, transform, materialize };
 }
 
 export function createPlayerState(
@@ -289,6 +346,9 @@ export function createPlayerState(
     // Le jeu démarre de JOUR (game/dayNight.ts) : forme humaine.
     legsBase: LEGS_BASE_DAY,
     transform: null,
+    // Le jeu commence par la réapparition du joueur au centre de la salle de
+    // départ -- même animation qu'après une mort, seconde moitié seulement.
+    materialize: { type: MATERIALIZE_REAPPEAR, throttle: 0 },
     transformCooldown: 0,
     anim: createWalkAnimState(),
     orientation: 1,
@@ -309,6 +369,52 @@ export function playerBox(player: PlayerState): Box3 {
     minZ: player.gridZ,
     maxZ: player.gridZ + PLAYER_HEIGHT,
   };
+}
+
+/**
+ * Avance la (dé)matérialisation d'un tick.
+ *
+ * Les deux moitiés n'ont pas la même cadence, et c'est un fait ROM, pas un
+ * réglage : la première avance à chaque frame (#17DC), la seconde une frame
+ * sur deux (#17A7). La disparition est donc brutale et le retour posé.
+ *
+ * Deux fins distinctes, selon la moitié :
+ * - au pivot 0x77, la ROM éteint l'entité (`type = 0x01`). Ici l'animation se
+ *   termine simplement, et c'est à l'appelant de faire ce que la ROM enchaîne
+ *   -- perdre une vie, recharger la salle, replacer le joueur ;
+ * - à 0x7F, le joueur reprend sa forme. La ROM la lit dans `+0x10` ; le
+ *   portage la tient dans `legsBase`, déjà positionné par l'appelant.
+ */
+function advanceMaterialize(player: PlayerState): void {
+  const m = player.materialize!;
+
+  if (m.type >= MATERIALIZE_REAPPEAR) {
+    m.throttle = (m.throttle + 1) % MATERIALIZE_SLOW_THROTTLE;
+    if (m.throttle !== 0) return;
+  }
+
+  if (m.type === MATERIALIZE_PIVOT || m.type === MATERIALIZE_LAST) {
+    player.materialize = null;
+    return;
+  }
+  m.type += 1;
+}
+
+/** Le joueur se désintègre sur place (0x70). L'animation se termine quand il a
+ * disparu -- l'appelant enchaîne alors sur la perte de vie et le rechargement
+ * de la salle, comme la ROM. */
+export function startDematerialize(player: PlayerState): void {
+  player.materialize = { type: MATERIALIZE_FIRST, throttle: 0 };
+  player.transform = null;
+  player.velX = 0;
+  player.velY = 0;
+  player.velZ = 0;
+}
+
+/** Le joueur réapparaît (0x78) -- la valeur même que le checkpoint de porte
+ * écrit dans le template, donc la moitié « réapparition » seule. */
+export function startMaterialize(player: PlayerState): void {
+  player.materialize = { type: MATERIALIZE_REAPPEAR, throttle: 0 };
 }
 
 /**
@@ -435,6 +541,13 @@ export function updatePlayer(
   // reste de la frame (`inc sp` x2 pour avaler le RET de l'appelant). D'où les
   // deux sorties anticipées ci-dessous : pendant une transformation, il ne se
   // passe littéralement rien d'autre.
+  // La (dé)matérialisation passe AVANT tout, y compris la transformation : sa
+  // logique remplace entièrement celle du joueur dans la ROM, puisque c'est le
+  // TYPE de l'entité qui décide de la routine dispatchée.
+  if (player.materialize) {
+    advanceMaterialize(player);
+    return;
+  }
   if (player.transform) {
     advanceTransform(player);
     return;
@@ -564,6 +677,21 @@ export function playerDrawCalls(player: PlayerState, view: ViewAngle): SpriteDra
   // PENDANT LA TRANSFORMATION : une figure UNIQUE, pas une paire. Le corps a
   // été éteint par le déclencheur (type du slot compagnon forcé à 0x01), il
   // n'y a donc rien à empiler et rien à départager.
+  if (player.materialize) {
+    const frame = player.frames.materialize[player.materialize.type - MATERIALIZE_FIRST]!;
+    const offset = getProjOffset(player.materialize.type, 0) ?? [0, 0];
+    return [
+      {
+        texture: frame.texture,
+        worldPos: [rx, player.gridZ, ry],
+        size: [frame.width, frame.height],
+        projOffset: offset,
+        flipX: frame.hflipState !== viewNeedsFlip(view),
+        sortKey,
+      },
+    ];
+  }
+
   if (player.transform) {
     const frame = player.frames.transform[player.transform.type - TRANSFORM_TYPE_BASE]!;
     const offset = getProjOffset(player.transform.type, 0) ?? [0, 0];

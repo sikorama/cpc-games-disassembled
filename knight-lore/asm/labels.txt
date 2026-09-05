@@ -185,6 +185,7 @@
 170D fn_menu_glyph_unpack
 17A7 fn_player_materialize_anim_b
 17BC fn_player_materialize_anim_end
+17CC fn_player_dematerialize_start
 17DC fn_player_materialize_anim_a
 17F4 fn_pickup_catalog_ptr_clear_and_idle
 17FC fn_player_materialize_anim_pivot
