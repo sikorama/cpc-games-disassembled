@@ -1278,6 +1278,65 @@ cohérent du jeu — un thème, un niveau, une famille d'objets — plutôt que 
 cas dispersés. Ça ne ressemble pas à un bug de calcul, ça ressemble à une
 zone oubliée, et c'est presque toujours une énumération incomplète.
 
+## 25bis. Une plage de types écrite « 0x30-0x3D » est une hypothèse, pas un fait
+
+**Symptôme.** Deux documents du projet se contredisent frontalement. L'un dit
+que les types 0x30-0x3D sont le joueur nocturne, l'autre que 0x36/0x37 sont
+des blocs mobiles. Un octet de type ne pouvant pas être les deux, on conclut
+qu'une des deux lectures est fausse et on se prépare à en jeter une.
+
+**Ce qui se passait réellement.** Les deux étaient vraies. C'est la *notation
+en plage* qui était fausse : le joueur nocturne occupe 0x30-0x35 **et**
+0x38-0x3D, avec un trou de deux entrées au milieu. Personne n'avait menti sur
+une entrée ; quelqu'un avait résumé quatorze entrées de table par un tiret.
+
+**Ce qui rend l'erreur invisible.** Une plage écrite à la main est une
+*compression*, et elle est faite au moment où l'on a sous les yeux les entrées
+qui comptent — ici 0x32 et 0x34, les seuls types de joueur réellement
+instanciés. Les entrées du milieu ne sont pas vérifiées : elles sont
+**supposées par continuité**. La contradiction ne se déclare que bien plus
+tard, contre un document écrit par quelqu'un qui avait, lui, regardé le
+milieu.
+
+**Règle.** Une plage de types n'est un fait que si elle a été énumérée entrée
+par entrée. Sinon, écrire les entrées réellement observées et le dire :
+« 0x32 et 0x34 confirmés, reste de la plage non vérifié » est une phrase plus
+longue et infiniment plus utile que « 0x30-0x3D ».
+
+**Le bonus, et il vaut bien plus que la contradiction levée.** Une fois les
+plages tabulées entrée par entrée, les trous ne sont pas des accidents : ils
+sont **prévisibles**, et pour une raison d'encodage.
+
+Ces familles sont des **animations de marche**, encodées `base | (bit<<3) |
+phase` sur un bloc de 16 types. Or il n'y a que **6 phases** (0-5). Les codes
+où `phase` vaut 6 ou 7 — soit `base+6`, `base+7`, `base+E`, `base+F` — sont
+donc **structurellement inatteignables** par l'animation. Quatre types gratuits
+par bloc de seize. Le jeu les a tous recyclés, dans les trois familles :
+
+| famille de jambes | base | +6 | +7 | +E | +F |
+|---|---|---|---|---|---|
+| chevalier, jour | 0x10 | 0x16 statue de crapaud | 0x17 pique | 0x1E chevalier (patrouille) | 0x1F idem |
+| loup-garou, nuit | 0x30 | 0x36 bloc mobile axe X | 0x37 bloc mobile axe Y | 0x3E bloc poussable | 0x3F boule à pointes |
+| garde | 0x90 | 0x96 jambes (routine alt) | 0x97 idem | 0x9E Melkhior | 0x9F idem |
+
+Douze codes libres, douze codes réutilisés, zéro exception. Le recyclage n'est
+d'ailleurs pas toujours vers un objet sans rapport : chez le garde, +6/+7
+pointent vers une **variante** de la routine de jambes — la place libre a servi
+à loger un second personnage de la même famille.
+
+**Ce que ça change pour la méthode.** Les trous cessent d'être une bizarrerie à
+constater pour devenir une **prédiction vérifiable** : dès qu'on identifie une
+famille animée sur `n` phases dans un bloc de 16, on sait exactement quels
+codes sont libres, et on peut aller regarder ce qui s'y trouve **avant** de se
+faire surprendre par une contradiction. C'est l'inverse du travail habituel —
+au lieu de découvrir un type par hasard puis de chercher sa place, on déduit la
+place puis on va y lire le type.
+
+Et ça donne la vraie raison de la règle : « 0x30-0x3D » n'est pas seulement
+imprécis, c'est une notation qui **efface la structure**. La plage réelle est
+« 6 phases × 2 demi-jeux, plus 4 codes recyclés », et cette phrase-là prédit,
+là où le tiret ne fait que résumer.
+
 ## 26. Une capacité peut être un BIT DE DONNÉES, pas une table de types
 
 **Symptôme.** On cherche « quels types d'entité sont poussables /
@@ -1362,6 +1421,109 @@ hauteurs où rien ne les soutient, donc elles ne bougent pas non plus sous la
 gravité) mais **une trace live la trancherait en une minute**. Encoder la
 conclusion là où une seule valeur change si elle tombe, et écrire dans la note
 le geste exact qui la vérifierait.
+
+## 28. Code auto-modifiant : repérer le `ld (nnnn),a` qui vise un octet de DÉPLACEMENT
+
+**Symptôme.** Une routine commence par écrire deux octets à des adresses
+situées dans son propre corps :
+
+```
+ld   hl,#0109       ; #020A pour l'autre type qui partage la routine
+ld   a,h / ld (#0FBF),a
+ld   a,l / ld (#0FD0),a
+```
+
+On note « code auto-modifiant, deux constantes de paramétrage différentes
+selon le type, à relire avant d'implémenter » et on passe à la suite. C'est
+exactement ce qui avait été écrit ici — et c'est une description qui ne dit
+rien.
+
+**Ce qu'il faut faire à la place, et ça prend deux minutes.** Calculer les
+frontières d'instructions et regarder sur quel octet l'adresse-cible tombe.
+Trois cas, trois sens sans rapport :
+
+- sur un **opcode** → la routine change d'opération ;
+- sur un **opérande immédiat** → la routine change de constante (le cas qu'on
+  suppose par défaut, et souvent le moins fréquent des trois) ;
+- sur l'**octet de déplacement** d'un `(ix+dd)` → la routine change de **champ
+  de structure**, c'est-à-dire d'axe, de compteur, de cible.
+
+Ici les deux adresses tombaient dans le troisième cas, et les octets le
+disent sans ambiguïté :
+
+```
+0FBD: dd 7e 01     ld a,(ix+#01)     ; 0FBF = le déplacement -> grid_x ou grid_y
+0FCE: dd 77 09     ld (ix+#09),a     ; 0FD0 = le déplacement -> vecteur X ou Y
+```
+
+Les deux types ne sont donc pas « le même mouvement avec d'autres
+paramètres » : c'est **la même routine appliquée à un autre axe**. L'un oscille
+en X, l'autre en Y. Aucune valeur numérique n'a changé de sens ; c'est le champ
+lu et le champ écrit qui ont changé.
+
+**Pourquoi ça vaut le détour.** La lecture « deux constantes » mène à
+implémenter deux vitesses ou deux amplitudes, donc à produire deux objets qui
+bougent pareil — un écart qu'on mettra longtemps à attribuer, parce que le code
+aura l'air fidèle. La lecture correcte donne un comportement observable et
+falsifiable en jeu, pour le même temps passé.
+
+**Le geste, à appliquer systématiquement.** Toute adresse-cible d'écriture qui
+tombe dans la plage de code se désassemble : prendre l'octet, remonter à
+l'instruction qui le contient, nommer le rôle de l'octet. Un `ld (nnnn),a` dont
+la cible est du code n'est pas documenté tant que ce rôle n'est pas écrit. Et
+le repère qui déclenche le geste est facile : une adresse-cible qui **ne tombe
+pas sur une frontière d'instruction** est toujours intéressante.
+
+## 29. Un effet de bord en prélude : ses appelants sont sa documentation
+
+**Le piège, déjà repéré et resté ouvert.** La primitive de déplacement
+générique (`RST 10`) fait, avant tout, un `dec (ix+#0B)` — puis ce même octet
++0B est relu quelques instructions plus loin comme composante Z du vecteur. Un
+octet, deux usages, deux moments. Ça avait été correctement noté, étiqueté
+« piège potentiel », et laissé là.
+
+**Ce que ça cachait.** Le mécanisme de descente du cube — cherché longtemps
+dans sa propre routine de logique, où il n'est pas, et classé « piste ouverte »
+faute de l'y trouver. La routine fait :
+
+```
+ld   (ix+#0B),#00
+rst  #10              ; le prélude décrémente -> #FF, soit -1
+```
+
+La descente **est** l'effet de bord. L'objet ne descend pas parce que sa
+routine le fait descendre : il descend parce qu'il a écrit 0 dans un octet que
+la primitive décrémente avant de le lire comme déplacement vertical. Il n'y
+avait rien à trouver dans la routine, et c'est précisément pour ça qu'on ne l'y
+trouvait pas.
+
+**Ce qui transforme la lecture en preuve.** Une routine voisine, sans rapport
+thématique, fait la même chose avec l'autre valeur :
+
+```
+ld   (ix+#0B),#01     ; -> 0 après décrément : aucun mouvement vertical
+```
+
+Deux appelants, deux valeurs écrites juste avant le même point d'application,
+deux résultats opposés et tous les deux cohérents avec l'interprétation. C'est
+un **test différentiel**, et il vaut une trace live : une lecture erronée du
+prélude devrait expliquer pourquoi l'un écrit 0 et l'autre 1 à cet endroit
+précis, et n'y arriverait pas.
+
+**La règle.** Quand une primitive partagée a un effet de bord en prélude, ses
+appelants sont la documentation de cet effet de bord. Inventorier `grep` en
+main **tous** les sites qui écrivent le champ concerné juste avant l'appel, et
+lire les valeurs écrites comme un jeu de cas de test fourni par les auteurs du
+jeu. Un champ mis à 0 par l'un et à 1 par l'autre, immédiatement avant le même
+appel, n'est jamais une coïncidence.
+
+**La leçon plus large.** Une note « piste ouverte, mécanisme pas trouvé dans
+cette routine » désigne presque toujours un mécanisme qui est **ailleurs par
+construction** — dans une primitive partagée, un prélude, un dispatch — et non
+un mécanisme manquant. La bonne question n'est pas « qu'est-ce que je n'ai pas
+su lire ici ? » mais « qui d'autre touche à cet octet ? ». Voir aussi §23 : un
+octet correctement décrit mais mal situé dans le temps se documente quand même
+de travers.
 
 ## Limites connues de cette méthode
 

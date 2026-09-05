@@ -129,26 +129,78 @@ Le cooldown de rotation de 2 ticks est déjà modélisé
 (`PlayerState.turnCooldown`) et restera inerte jusque-là, puisque le chemin
 directional le court-circuite dans l'original aussi.
 
-### Poses alternatives aléatoires
+### Poses alternatives aléatoires — DÉSASSEMBLÉ 2026-09-05, écart désormais assumable
 Les slots 6/7 de chaque groupe de types (0x26/0x27, 0x2E/0x2F → `hero_up6`,
-`hero_up7`, `hero_up2`, `hero_up1`) sont des poses rares tirées au hasard
-par `fn_entity_materialize_pick_subtype` (#26C3,
-`asm/code/doors_and_player_logic.asm:1353-1401`) et tenues 8 frames.
-Bloqué : le comportement de `var_pseudo_random_acc` (cadence de ré-tirage,
-source de l'aléa) **n'est pas encore désassemblé**.
+`hero_up7`, `hero_up2`, `hero_up1`) sont des poses rares tirées au hasard par
+`fn_entity_materialize_pick_subtype` (#26C3) et tenues 8 frames.
 
-### Transformation jour/nuit (loup-garou)
-Un simple `XOR #20` sur le type dans l'original
-(`asm/code/pickups_and_transform.asm:355-359`, 0x14 jour ↔ 0x34 nuit). Les
-plages sont connues (jambes 0x30-0x3D, corps 0x40-0x4F) et leur calibration
-de projection est identifiée (#1DA8 et #1DAD).
+*Ce que le désassemblage a réglé.* Ces slots ne sont pas un choix arbitraire :
+ce sont les **codes libres** de la famille « corps ». L'encodage `base |
+(bit<<3) | phase` n'a que 6 phases, donc +6/+7 de chaque demi-jeu sont
+inatteignables par l'animation — et la routine les force explicitement
+(`(iy+off_type) & #F8 | #06`, puis `+#10`). Même règle que pour les familles
+de jambes, appliquée ici **à l'intérieur** de la famille au lieu de servir à
+loger un objet sans rapport. Voir `docs/METHODOLOGY.md` §25bis.
 
-**Contradiction à régler d'abord** : la table de dispatch de logique donne
-0x30-0x3D au joueur de nuit, mais 0x36/0x37 sont documentés par ailleurs
-comme des blocs mobiles partageant le sprite du petit bloc 0x59DB
-(`docs/SYMBOLS.md:320`, `tools/room_map/teleport.py`). Un octet de type ne
-peut pas être les deux — une des deux lectures est fausse. Les plages nuit
-sont donc volontairement absentes de `render/isoOffsets.ts`.
+*Seuils exacts* : `var_pseudo_random_acc` (#006D) lu tel quel, `< 0x02` →
+pose 6, `>= 0xFE` → pose 7, sinon le cas ordinaire. Soit **~0,8 % chacune**.
+
+*Écart à assumer, et il est irréductible.* La source de l'aléa est
+désassemblée et **non portable** : l'accumulateur est mélangé deux fois par
+tour, une fois par entité dispatchée (`acc += R`, le registre de
+rafraîchissement du Z80) et une fois par frame
+(`acc += mem[var_frame_counter] + bas + haut`, qui utilise la valeur du
+compteur de frames comme une **adresse** et lit l'octet qui s'y trouve). Ni
+le registre R ni le contenu mémoire à une adresse arbitraire n'ont
+d'équivalent dans le portage. La *cadence* et la *distribution* sont donc
+reproductibles fidèlement, la *séquence* ne l'est pas — n'importe quel
+générateur respectant les deux seuils est aussi fidèle qu'on peut l'être, et
+prétendre mieux serait faux.
+
+### Transformation jour/nuit (loup-garou) — DÉBLOCAGE 2026-09-05
+Pas encore implémenté, mais **plus rien ne bloque** : le désassemblage est
+complet, tous les nombres sont dans `docs/SYMBOLS.md`.
+
+*La contradiction est levée, et aucune des deux lectures n'était fausse.* La
+table de dispatch, décodée entrée par entrée depuis `extra/dump_ref.bin`
+(#0676+2×type), donne `fn_player_logic_night` (#20D0) sur **0x30-0x35 et
+0x38-0x3D**, et `fn_moving_block_logic` (#0F98/#0F93) sur **0x36/0x37**. La
+plage du joueur nocturne est trouée ; c'est la notation « 0x30-0x3D » qui
+était fautive, pas l'une des deux sources.
+
+*Raison structurelle, et elle se vérifie sur les trois familles de jambes* :
+l'encodage est `base | (bit<<3) | phase` avec 6 phases seulement, donc
+`base+6/+7/+E/+F` sont inatteignables par l'animation et ont tous été
+recyclés (0x16/0x17/0x1E/0x1F pour la base 0x10, 0x36/0x37/0x3E/0x3F pour
+0x30, 0x96/0x97/0x9E/0x9F pour 0x90). Douze codes libres, douze recyclés.
+Les plages nuit peuvent donc entrer dans `render/isoOffsets.ts` — **à
+condition d'y entrer trouées**.
+
+*Faits ROM pour l'implémentation* :
+- **Cycle** : `fn_hud_day_night_cycle` (#1C44) agit 1 frame sur 8 et avance
+  l'icône d'un pas ; 49 paliers de 0xB0 à 0xE1, soit **392 ticks par
+  demi-cycle**. En fin de cycle (#1CAF) : icône `XOR 1` (0x58 soleil ↔ 0x59
+  lune), et `var_transform_flag_and_saved_type` (0x0077) = 1, qui est la
+  **demande** de transformation.
+- **Compteur de jours** : incrémenté seulement au passage nuit→jour, en
+  **BCD** (`add a,#01 / daa`), et `cp #40` → fin de partie à 40 jours.
+- **Transformation** : `fn_player_transform_trigger` (#1BB0) sauvegarde le
+  type courant, pose 8 sous-étapes ; `fn_player_transform_tick` (#1BE1) en
+  consomme une 1 frame sur 4 → **32 ticks**, en tirant à chaque étape un type
+  parmi 0x5C-0x5F (jamais deux fois le même d'affilée) et en basculant bit6
+  de `flags` (tremblement).
+- **Complétion** (#1C24) : `type_final = sauvegardé XOR 0x20`, et l'entité
+  **compagnon** (slot suivant, `ix+0x1C`) reçoit `type_final + 0x10`. C'est ce
+  `+0x10` qui confirme le couplage jambes/corps : jambes 0x14 → corps 0x24 le
+  jour, 0x34 → 0x44 la nuit. Si bit5 du type final est posé (donc la nuit),
+  `proj_offset_y` est décrémenté de 1 — le loup-garou est dessiné une unité
+  plus haut.
+
+*Ce qui reste ouvert, et ce n'est pas bloquant* : le tirage pseudo-aléatoire
+des sous-étapes s'appuie sur `var_pseudo_random_acc` **et sur le registre `R`**
+(`ld a,r / ld c,a / add a,c`), qui n'a pas d'équivalent portable. C'est du
+cosmétique — l'ordre des 4 types transitoires — et il est admissible en stub,
+contrairement à la mécanique du cycle.
 
 ### Comportements dynamiques des blocs — RÉVISÉ 2026-09-04
 
@@ -167,17 +219,23 @@ sur **aucune** instance de 0x36, 0x37, 0x5B, 0x8F, 0x07, 0x16.
 Ce qui reste, et n'a rien à voir avec la poussée :
 
 - **0x36/0x37, blocs mobiles** — mouvement autonome, pas une réaction au
-  joueur. `fn_moving_block_logic` (#0F98) oscille en X : cible
+  joueur. Traités comme des blocs statiques solides pour l'instant, mais
+  **plus rien ne bloque depuis le 2026-09-05**. Les « deux constantes en code
+  auto-modifiant » (#0FBF/#0FD0) ne sont pas des constantes : ce sont les
+  **octets de déplacement** de deux `(ix+dd)`, vérifiés dans le dump
+  (`0FBD: dd 7e 01`, `0FCE: dd 77 09`). **0x36 oscille en X, 0x37 en Y** —
+  même routine, même amplitude, seul l'axe change. Cible :
   `f(var_frame_counter + bit de l'adresse du slot)` repliée par bit4,
-  comparée à `(grid_x + 8) & 0x0F`, pas de ±1. Deux constantes sont écrites
-  **en code auto-modifiant** (#0FBF/#0FD0) et diffèrent entre 0x36 et 0x37 —
-  à relire avant d'implémenter. Traités comme des blocs statiques solides
-  en attendant.
-- **0x5B, cube qui s'enfonce** — *pas encore désassemblé* pour l'essentiel :
-  `fn_sinking_cube_logic` (#0F67) consomme un déclencheur (bit3 de
-  `state_flags_2`) mais **le mécanisme de la descente en `grid_z` n'a pas été
-  trouvé** (`docs/SYMBOLS.md`, piste ouverte explicite). Bloquant : c'est une
-  mécanique de jeu, on finit le désassemblage avant d'écrire le code.
+  comparée à `(coord + 8) & 0x0F`, pas de ±1 ; le bit de l'adresse du slot
+  déphase les blocs d'une même salle entre eux.
+- **0x5B, cube qui s'enfonce** — **RÉSOLU 2026-09-05, la piste est fermée.**
+  La descente n'était ni dans `fn_sinking_cube_logic` (#0F67) ni dans le
+  système de collision : le cube écrit `(ix+0B)=0` juste avant `RST 10`, dont
+  le prélude fait `dec (ix+0B)` — l'octet vaut donc -1 quand la primitive le
+  relit comme composante Z. **Une unité de grille par déclenchement**
+  (bit3 de `state_flags_2`, consommé). Preuve croisée : le bloc mobile écrit
+  `1` au même endroit pour obtenir 0 après décrément, donc aucun mouvement
+  vertical. Implémentable tel quel.
 
 **Retiré de la liste** : *0x8F, bloc dormant*. Ce n'était pas un écart.
 `fn_dormant_block_transform` (#0F84) le laisse indiscernable d'un bloc
