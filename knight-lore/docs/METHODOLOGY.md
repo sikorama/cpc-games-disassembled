@@ -1574,6 +1574,50 @@ généré est une information ; l'exporter en silence en détruit une. C'est le
 prolongement direct de §24 (un outil exporte des faits, jamais une politique) :
 un état d'exécution n'est pas un fait sur le jeu, c'est un fait sur une partie.
 
+## 31. Une limite de monde peut ne pas être géométrique
+
+**Symptôme.** On cherche ce qui empêche le joueur de sortir d'une pièce, et on
+le cherche dans le décor : des murs, des boîtes de collision, une bordure. On
+constate alors que **les murs ne couvrent que deux côtés sur quatre**, et on en
+conclut à une lacune des données extraites — ou, pire, on ajoute côté portage
+un « mur invisible » avec des constantes trouvées à l'œil.
+
+**Ce qui se passait réellement.** La limite n'est pas dans le monde, elle est
+dans le **mouvement**. La primitive générique de déplacement clampe le vecteur
+avant même le scan de collision solide, avec un test qui n'a rien de
+géométrique :
+
+```
+|coord + delta - CENTRE| + demi_étendue  <  borne
+```
+
+Un RAYON autour du centre de la pièce, pas un rectangle de murs. Et comme le
+clamp vit dans la primitive, il s'applique à **tout ce qui bouge** — le joueur,
+les ennemis, et le meuble qu'on pousse. C'est la seule raison pour laquelle un
+coffre poussé vers un côté sans mur s'arrête au lieu de partir hors champ.
+
+**Les deux indices qui auraient dû mettre sur la voie.** D'abord, une
+géométrie de niveau *incomplète mais systématiquement* incomplète : deux côtés
+sur quatre, dans les 128 salles. Une donnée qui manque partout de la même façon
+n'est pas une donnée qui manque, c'est une donnée qui n'existe pas — le
+mécanisme est ailleurs. Ensuite, la présence d'une routine de « clamp » appelée
+depuis la primitive de mouvement, qu'on avait pourtant déjà désassemblée et
+étiquetée d'un prudent « HYPOTHÈSE : empêche de sortir de la salle » sans aller
+vérifier ce que ça impliquait pour le reste.
+
+**La règle.** Avant de conclure qu'une contrainte de monde manque dans les
+données, chercher si elle n'est pas **appliquée au déplacement** plutôt
+qu'encodée dans la scène. Les moteurs contraints en mémoire préfèrent
+massivement une formule dans une primitive partagée à des données de bordure
+répétées dans chaque niveau : c'est une comparaison contre des octets par
+pièce, contre des dizaines d'entités de mur.
+
+**Le piège de portage qui en découle**, et c'est le vrai coût de l'erreur : une
+limite reconstruite à l'œil s'applique à ce qu'on avait sous les yeux au moment
+de la reconstruire — ici, le personnage — et pas au reste. Tout ce qui bouge
+sans qu'on y ait pensé sort du monde. Une limite encodée là où le jeu l'encode
+n'a pas ce défaut, parce qu'elle est au même endroit que ce qu'elle contraint.
+
 ## Limites connues de cette méthode
 
 - Le sondage par breakpoint + poll a un coût réel (chaque hit/step est

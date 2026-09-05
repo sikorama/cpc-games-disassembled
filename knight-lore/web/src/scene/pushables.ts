@@ -32,6 +32,7 @@ import { pushPolicyFor, type PushPolicy } from "../physics/solidTypes";
 import type { SpriteDrawCall } from "../gl/spriteBatch";
 import type { ViewAngle } from "../render/isoMath";
 import { entityDrawCall, type ResolvedEntity } from "./room";
+import { clampDeltaToRoom, type RoomBound } from "../physics/roomBounds";
 
 export class PushableBody {
   gridX: number;
@@ -51,8 +52,8 @@ export class PushableBody {
   constructor(
     readonly resolved: ResolvedEntity,
     readonly policy: PushPolicy,
-    private readonly halfX: number,
-    private readonly halfY: number,
+    readonly halfX: number,
+    readonly halfY: number,
     private readonly height: number,
   ) {
     this.gridX = resolved.entity.gridX;
@@ -133,7 +134,11 @@ export function pushableObstacles(bodies: PushableBody[]): Obstacle[] {
  * immobile (sa routine efface son vecteur AVANT de l'appliquer), et le laisser
  * dériver changerait un comportement de jeu. Voir physics/solidTypes.ts.
  */
-export function updatePushables(bodies: PushableBody[], staticObstacles: Obstacle[]): void {
+export function updatePushables(
+  bodies: PushableBody[],
+  staticObstacles: Obstacle[],
+  bounds: RoomBound,
+): void {
   for (const body of bodies) {
     if (body.policy === "clear-then-apply") {
       // fn_pushable_block_logic (#1D53) : CALL #22A5 puis RST 10.
@@ -150,14 +155,28 @@ export function updatePushables(bodies: PushableBody[], staticObstacles: Obstacl
       bodies.filter((other) => other !== body).map((other) => other.obstacle()),
     );
 
+    // LIMITE DE SALLE, appliquée AVANT le scan de collision solide -- c'est
+    // l'ordre de la ROM, où fn_entity_clamp_pending_x/_y sont appelées par
+    // fn_entity_movement_vector_resolve en amont du scan. Sans ça, un corps
+    // poussé vers un côté SANS MUR (les salles n'en ont que sur deux côtés)
+    // sort de la pièce et de l'écran -- constaté salle 0xB4.
+    const clampedX = clampDeltaToRoom(body.gridX, body.pendingX, body.halfX, bounds.x);
+    const clampedY = clampDeltaToRoom(body.gridY, body.pendingY, body.halfY, bounds.y);
+
     // Même ordre d'axes que la ROM (X puis Y, l'axe Z ne bougeant pas ici),
     // en reconstruisant la boîte entre les deux pour que Y voie déjà l'effet
     // de X.
-    const xRes = resolveAxis(body.box(), body.pendingX, "x", obstacles);
+    //
+    // La poussée transmise reste le vecteur d'ORIGINE et non le vecteur
+    // clampé : la ROM recopie `(ix+09)`, l'octet de structure, qui n'est
+    // réécrit avec la valeur rognée qu'en toute fin de résolution (loc_243E).
+    // Un coffre bloqué par le bord transmet donc quand même un pas plein à ce
+    // qu'il touche.
+    const xRes = resolveAxis(body.box(), clampedX, "x", obstacles);
     xRes.blocker?.pushTarget?.receivePush("x", body.pendingX);
     body.gridX += xRes.delta;
 
-    const yRes = resolveAxis(body.box(), body.pendingY, "y", obstacles);
+    const yRes = resolveAxis(body.box(), clampedY, "y", obstacles);
     yRes.blocker?.pushTarget?.receivePush("y", body.pendingY);
     body.gridY += yRes.delta;
 
