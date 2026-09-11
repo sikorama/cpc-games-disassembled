@@ -31,12 +31,21 @@ from PIL import Image,ImageDraw,ImageColor
 
 # (left, top, right, bottom) in the 768x542 "crop=1,full=1,live=0" screenshot
 # coordinate space — see module docstring.
-CONTENT_CROP = (128, 82, 640, 420)
+CONTENT_CROP = (130, 80, 640, 340)
+
 #CONTENT_CROP = (128, 82, 640, 500)
 
 GRID_COLS = 16  # room_id low nibble
 GRID_ROWS = 16  # room_id high nibble
-OVERLAP_COEF =0.7
+OVERLAP_COEF =0.68
+
+# The grid overlay is drawn at the same pitch as the room paste (see
+# placement() below), but the pasted images are the full HUD-stripped crop
+# (128,82,640,420), not CONTENT_CROP — so the grid lattice and the visible
+# room content are offset by a fixed number of pixels. Nudge these two to
+# make the grid track wall/door edges; they don't affect room placement.
+GRID_OFFSET_X = 255+5
+GRID_OFFSET_Y = 5
 
 def load_manifest(out_dir: Path) -> dict:
     manifest_path = out_dir / "rooms_manifest.json"
@@ -52,13 +61,23 @@ def stitch(out_dir: Path, crop, dest: Path):
                                 int((GRID_COLS+GRID_ROWS) * tile_h *OVERLAP_COEF) ),
                                 (0, 0, 0) )
 
-    # Iso Grid
+    # Iso Grid — vertices computed with the exact same formula as the room
+    # paste below, so grid lines land on room boundaries instead of drifting
+    # out of sync with whatever fudge terms (+0.1, +15) the paste uses.
+    def placement(gx, gy):
+        return ( (gx + gy + 0.1) * tile_w * OVERLAP_COEF,
+                 (gy - gx + 15) * tile_h * OVERLAP_COEF )
+
+    def grid_vertex(gx, gy):
+        x, y = placement(gx, gy)
+        return (x + GRID_OFFSET_X, y + GRID_OFFSET_Y)
+
     draw0 = ImageDraw.Draw(canvas)
-    for x in range(64):
-        draw0.line( [(0 ,int(  OVERLAP_COEF* (2*x * tile_h) + crop[1] )) ,
-                     ( int(OVERLAP_COEF*2*x*tile_w), crop[1] ) ], ImageColor.getrgb("#323232") ,1)
-        draw0.line( [(0 ,int(  OVERLAP_COEF*(2*(x-32) * tile_h+crop[3]-crop[1]) )) ,
-                     ( int(OVERLAP_COEF*2*64*tile_w), int(OVERLAP_COEF*(2*(x+32)*tile_h+crop[3]-crop[1])) ) ], ImageColor.getrgb("#323232") ,1)
+    lo, hi = -1, GRID_COLS 
+    for gx in range(lo, hi):
+        draw0.line([grid_vertex(gx, lo+1), grid_vertex(gx, hi)], ImageColor.getrgb("#323232"), 1)
+    for gy in range(lo+1, hi+1):
+        draw0.line([grid_vertex(lo, gy), grid_vertex(hi-1, gy)], ImageColor.getrgb("#323232"), 1)
 
 
 
@@ -74,14 +93,14 @@ def stitch(out_dir: Path, crop, dest: Path):
         if not img_path.exists():
             missing_png.append(key)
             continue
-        img = Image.open(img_path).convert("RGB").crop(crop)
+        img = Image.open(img_path).convert("RGB").crop((128, 82, 640, 420))
         draw = ImageDraw.Draw(img)
 #        draw.polygon( [(0,315-crop[1]),(350-crop[0],410-1-crop[1]),(410-crop[0],410-1-crop[1]),(640-1-crop[1],315-crop[1]),(640-1-crop[1],420-crop[1]),(0,420-crop[1]) ], ImageColor.getrgb("#000000"),ImageColor.getrgb("#FF0000") ,1)
         draw.polygon( [(0,             315-crop[1]),
                        (350-crop[0],   425-1-crop[1]),
                        (410-crop[0],   425-1-crop[1]),
-                       (640-1-crop[0], 315-crop[1]),
-                       (640-1-crop[0], 500-1-crop[1]),
+                       (640+1-crop[0], 315-crop[1]),
+                       (640+1-crop[0], 500-1-crop[1]),
                        (0,             500-1-crop[1]) ], ImageColor.getrgb("#000000"),ImageColor.getrgb("#FF0000") ,0)
 
 
@@ -91,7 +110,8 @@ def stitch(out_dir: Path, crop, dest: Path):
 
 
         gy, gx = room_id & 0x0F , room_id >>4
-        canvas.paste(img, (int((gx+gy) * tile_w * OVERLAP_COEF), int(OVERLAP_COEF * (gy-gx+16) * tile_h  )), mask)
+        px, py = placement(gx, gy)
+        canvas.paste(img, (int(px), int(py)), mask)
         placed += 1
 
     canvas.save(dest)
